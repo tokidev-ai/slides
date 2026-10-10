@@ -1,0 +1,2215 @@
+<!doctype html>
+<!-- slizdeck-engine-version: 2.3.1 — no borrar este comentario. scripts/doctor.mjs
+     lo lee para saber contra qué versión del engine se generó este deck y
+     detectar si hay fixes de template.html posteriores que no llegaron acá
+     (ver CHANGELOG.md). Se copia tal cual al generar un deck nuevo en build. -->
+<!-- lang: ajustar al idioma del deck (es, en, pt...). Afecta la
+     hifenizacion, el corrector y como lo lee un lector de pantalla. -->
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>De programar con IA a construir con agentes · SCD Cochabamba</title>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     SLIZDECK DESIGN TOKENS
+     ============================================================ */
+  :root {
+    /* --- Colores: primario/secundario dominan, acento se usa con cuentagotas --- */
+    --cs-primary:     #1FD3F5;
+    --cs-secondary:   #D2F21E;
+    --cs-accent:      #FF4B3A;
+    /* El acento cuando resalta sobre el fondo (la cifra clave de una grafica,
+       la celda .hl de una tabla, el hito .hl de un timeline). Por default el
+       mismo acento; un pack cuyo acento solo vive sobre el primario (el lima
+       de committed) declara aca su version legible. */
+    --cs-accent-ink:  #FF5A4A;
+    /* Texto sobre un bloque de color primario solido (una card o barra en
+       --cs-primary). Blanco por default; un pack de primario claro (el ambar
+       de terminal) lo oscurece. */
+    --cs-on-primary:  #02101F;
+    --cs-cream:       #020D22;
+    --cs-cream-2:     #071A3A;
+    --cs-black:       #FFFFFF;
+    --cs-body:        #C9D6EA;
+    --cs-muted:       #93A4C2;
+    --cs-white:       #FFFFFF;
+    /* Superficie de cards/paneles y fondo del letterbox. Separados de
+       --cs-white/--cs-black para que un style pack oscuro pueda invertirlos
+       sin tocar el resto del sistema. */
+    --cs-surface:     #06183A;
+    --cs-void:        #00040C;
+    --cs-border:      rgba(31,211,245,0.22);
+    --cs-border-strong: rgba(31,211,245,0.40);
+    --cs-scrim:       rgba(31,211,245,0.07);
+    --cs-grain:       .09;
+    --cs-grad-radial: radial-gradient(112% 150% at 0% 100% in oklch, #06183A 0%, #020D22 100%);
+    --cs-grad-linear: linear-gradient(90deg in oklch, #1FD3F5 0%, #D2F21E 100%);
+    --cs-grad-text:   linear-gradient(90deg in oklch, #1FD3F5 0%, #7FE58E 50%, #D2F21E 100%);
+
+    /* --- Tipografía. Estos defaults son los del pack paper-white (validado
+       con check-style-pack.mjs); build siempre aplica el pack elegido encima
+       con apply-style-pack.mjs. --- */
+    --cs-font-sans:   'Archivo', ui-sans-serif, system-ui, sans-serif;
+    --cs-font-heading: 'Anton', 'Archivo', ui-sans-serif, sans-serif;
+    --cs-font-mono:   'Share Tech Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    /* Peso de los titulos grandes (cover, h2.title, transition). Un pack
+       cuya fuente de heading solo trae un peso (ej. Young Serif en
+       `editorial`, 400 unicamente) declara este token en 400: pedirle 600
+       a una fuente que no lo tiene fuerza negrita sintetica del navegador,
+       que en un display serif se ve visiblemente peor que el peso real. */
+    --cs-weight-heading: 400;
+
+    /* --- Radios: escala corta, todo el sistema de componentes usa estos 3 --- */
+    --cs-radius-sm:   12px;
+    --cs-radius-md:   20px;
+    --cs-radius-lg:   26px;
+
+    /* --- Padding del frame estándar de cada slide (.pad) --- */
+    --cs-pad-x:       120px;
+    --cs-pad-top:     96px;
+    --cs-pad-bottom:  120px;
+
+    --cs-shadow-2:    none;
+    --cs-fg-1:        var(--cs-black);
+    --cs-fg-2:        var(--cs-body);
+    --cs-ease-std:    cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* ============================================================
+     BASE
+     ============================================================ */
+  * { box-sizing: border-box; }
+  html, body { background: var(--cs-void); margin: 0; padding: 0; }
+  body {
+    font-family: var(--cs-font-sans);
+    color: var(--cs-fg-2);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ============================================================
+     SECTION = single slide canvas (1920×1080 default)
+     deck-stage scales the canvas to fit viewport, letterboxed.
+     ============================================================ */
+  deck-stage > section {
+    background: var(--cs-cream);
+    color: var(--cs-fg-2);
+    overflow: hidden;
+    position: relative;
+    transition: opacity 120ms ease;
+  }
+
+  /* Surface helpers */
+  .grad   { background: var(--cs-grad-radial) !important; color: #fff !important; }
+  .cream  { background: var(--cs-cream); color: var(--cs-body); }
+
+  /* Grano sobre el degradado.
+     Un degradado puro se lee digital y plano, sobre todo proyectado: el
+     banding se nota en las transiciones suaves. Una capa de ruido finisimo
+     lo rompe y le da textura de impresion. El ruido es un SVG inline
+     (feTurbulence), asi que no hay archivo externo ni peticion de red y el
+     deck sigue siendo autonomo.
+     Sin mix-blend-mode a proposito: `overlay` es practicamente invisible
+     sobre fondos oscuros, porque el ruido gris medio apenas desplaza el
+     color. Comprobado renderizando las dos variantes.
+     Intensidad: --cs-grain (0 lo apaga, .09 default, .16 es marcado). */
+  .grad::before {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: var(--cs-grain, .09);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 140px 140px;
+  }
+  /* El contenido va por encima del grano */
+  .grad > * { position: relative; z-index: 1; }
+
+  /* Standard frame inside a slide */
+  .pad {
+    padding: var(--cs-pad-top) var(--cs-pad-x) var(--cs-pad-bottom);
+    height: 100%;
+    box-sizing: border-box;
+    display: flex; flex-direction: column;
+    justify-content: flex-start;
+    position: relative;
+  }
+  .pad.center { justify-content: center; align-items: center; text-align: center; }
+  /* Centrado vertical conservando la alineacion a la izquierda. Para slides
+     de contenido con poco material, donde alinear arriba deja el tercio
+     inferior vacio y el conjunto se lee sin terminar. */
+  .pad.mid { justify-content: center; }
+
+  /* ============================================================
+     TYPOGRAPHY
+     ============================================================ */
+  .eyebrow {
+    font-size: 24px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--cs-primary);
+    margin: 0 0 36px;
+  }
+  .grad .eyebrow { color: rgba(255,255,255,.9); }
+
+  h1.cover {
+    font-family: var(--cs-font-heading);
+    font-size: 168px; line-height: 0.98;
+    letter-spacing: -0.02em;
+    margin: 0; font-weight: var(--cs-weight-heading); color: #fff;
+  }
+  h1.cover-md {
+    font-family: var(--cs-font-heading);
+    font-size: 132px; line-height: 1.0;
+    letter-spacing: -0.02em;
+    margin: 0; font-weight: var(--cs-weight-heading); color: #fff;
+  }
+  h2.title {
+    font-family: var(--cs-font-heading);
+    font-size: 76px; line-height: 1.05;
+    letter-spacing: -0.015em;
+    margin: 0 0 56px;
+    font-weight: var(--cs-weight-heading); color: var(--cs-black);
+  }
+  h2.title.tight { margin-bottom: 40px; }
+
+  .subtitle {
+    font-size: 36px; line-height: 1.4;
+    font-weight: 300;
+    color: rgba(255,255,255,.86);
+    max-width: 1300px;
+    margin-top: 48px;
+  }
+
+  .payoff {
+    font-size: 30px; line-height: 1.4;
+    color: var(--cs-black); font-weight: 600;
+    margin-top: 56px; max-width: 1500px;
+  }
+  .payoff em { font-style: normal; }
+
+  /* Cita de fuente para una cifra o afirmación: "Fuente: X, fecha".
+     export-pptx.mjs ya la reconoce (rol "caption"); antes no existia
+     ningun patron que la produjera, asi que cada deck la reinventaba con
+     un nombre distinto que el export no reconocia. Lleva punto final
+     (regla de voz 2: los captions sí cierran con punto). */
+  .stat-source {
+    font-size: 22px; line-height: 1.4;
+    color: var(--cs-muted);
+    margin-top: 24px;
+  }
+
+  /* Gradient word — wrap a span/em inside any heading */
+  .grad-word {
+    background: var(--cs-grad-text);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+    font-style: normal;
+  }
+
+  /* Mono helper */
+  .mono { font-family: var(--cs-font-mono); }
+
+  /* Transition slide title (cream + huge centered title) */
+  .ts-title {
+    font-family: var(--cs-font-heading);
+    font-size: 168px; line-height: 0.98;
+    letter-spacing: -0.02em;
+    margin: 0; font-weight: var(--cs-weight-heading); color: var(--cs-black);
+    text-align: center;
+  }
+  .ts-title .grad-word { font-weight: var(--cs-weight-heading); }
+  .ts-tagline {
+    margin-top: 36px;
+    font-size: 36px; line-height: 1.4;
+    font-weight: 300;
+    color: var(--cs-body);
+    text-align: center;
+    max-width: 1300px;
+  }
+
+  /* .ts-title a 168px asume una frase corta (menos de ~45 caracteres): a
+     ese tamano, una oracion mas larga se parte en 3-4 lineas y deja de
+     leerse como un remate. Elegir el tamano por longitud del texto, no
+     usar siempre el default:
+       < 45 caracteres  -> .ts-title    (168px, 1 linea)
+       45-80 caracteres -> .ts-title-md (96px,  1-2 lineas)
+       80-120 caracteres -> .ts-title-sm (64px, 2-3 lineas)
+       > 120 caracteres  -> no usar este patron: acortar la frase o pasarla
+                            a una slide de contenido con cuerpo de texto. */
+  .ts-title-md {
+    font-family: var(--cs-font-heading);
+    font-size: 96px; line-height: 1.08;
+    letter-spacing: -0.015em;
+    margin: 0; font-weight: var(--cs-weight-heading); color: var(--cs-black);
+    text-align: center;
+  }
+  .ts-title-sm {
+    font-family: var(--cs-font-heading);
+    font-size: 64px; line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin: 0; font-weight: var(--cs-weight-heading); color: var(--cs-black);
+    text-align: center;
+  }
+  .ts-title-md .grad-word, .ts-title-sm .grad-word { font-weight: var(--cs-weight-heading); }
+
+  /* Resaltar una palabra o frase suelta sin necesitar un fondo degradado:
+     negrita + color primario. Como maximo un .hl por slide (mismo cupo
+     visual que el acento) — no es una alternativa al gradiente, es para
+     las slides en --cs-cream que quieren un remate sin cambiar de fondo. */
+  /* Solo en texto en linea: tr.hl, td.hl y li.hl de los patrones de datos
+     tienen su propio estilo y no deben heredar este. */
+  :is(span, strong, em, b).hl { font-weight: 700; color: var(--cs-primary); }
+  :is(span, strong, em, b).hl-accent { font-weight: 700; color: var(--cs-accent-ink); }
+
+  /* Separador de seccion: mismo .ts-title/.ts-tagline centrado, pero sobre
+     class="grad" (el mismo fondo invertido que cover/cierre) en vez de
+     --cs-cream. La diferenciacion es el fondo, no un numero de fondo
+     (probado: un "01" gigante detras del titulo choca contra las letras
+     a estos tamanos). .ts-title/.ts-tagline son negro por default; sobre
+     .grad necesitan pasar a blanco, igual que ya hace .eyebrow arriba. */
+  .grad .ts-title, .grad .ts-tagline { color: #fff; }
+  /* .grad-word clava su color en el mismo degradado de marca que .grad ya
+     usa de fondo (--cs-grad-text vs --cs-grad-linear/-radial son la misma
+     paleta) — la palabra "resaltada" queda casi invisible contra su propio
+     fondo. Sobre .grad degrada a blanco solido, igual que el resto del
+     titulo a su alrededor: aqui el highlight es el fondo mismo, no hace
+     falta un segundo degradado encima. */
+  .grad .grad-word {
+    background: none;
+    -webkit-background-clip: initial; background-clip: initial;
+    -webkit-text-fill-color: #fff; color: #fff;
+  }
+
+  /* ============================================================
+     FOOTER (always present on every slide)
+     ============================================================ */
+  .footer {
+    position: absolute;
+    left: 120px; right: 120px; bottom: 48px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 24px; letter-spacing: 0.06em;
+    color: var(--cs-muted); font-weight: 500;
+  }
+  .footer img { height: 22px; display: block; }
+  .footer .left { display: flex; align-items: center; gap: 18px; }
+  .footer .num {
+    font-variant-numeric: tabular-nums; font-weight: 600;
+    color: var(--cs-fg-1); opacity: .55;
+  }
+  .grad .footer { color: rgba(255,255,255,.6); }
+  .grad .footer .num { color: #fff; opacity: .8; }
+
+  /* ============================================================
+     COMMON COMPONENTS — baseline only
+     For richer patterns (.pq-card, terminals, mockups, mini-diagrams)
+     copy from components.md. For animation snippets (popup, SVG path
+     drawing, packets) copy from animations.md.
+     ============================================================ */
+
+  .card {
+    background: var(--cs-surface);
+    border: 1px solid var(--cs-border);
+    border-radius: var(--cs-radius-lg);
+    padding: 40px 44px;
+    box-shadow: var(--cs-shadow-2);
+  }
+  .card .card-eyebrow {
+    font-size: 24px; letter-spacing: 0.22em;
+    text-transform: uppercase; font-weight: 700;
+    color: var(--cs-muted); margin-bottom: 18px;
+  }
+  .card h3 {
+    font-size: 32px; line-height: 1.15;
+    letter-spacing: -0.01em;
+    color: var(--cs-black); font-weight: 700;
+    margin: 0 0 14px;
+  }
+  .card p {
+    font-size: 24px; line-height: 1.5;
+    color: var(--cs-body); margin: 0;
+  }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 20px; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    padding: 7px 14px; border-radius: 999px;
+  }
+  /* color-mix, no un rgba() fijo: un rgba hardcodeado congela el teal del
+     pack por default y sobrevive a apply-style-pack.mjs (que solo fusiona
+     :root, no reglas fuera de :root) — cambiar de pack dejaba este badge
+     con el color viejo mientras el resto del deck ya usaba el nuevo. */
+  .badge-primary { background: color-mix(in srgb, var(--cs-primary) 10%, transparent); color: var(--cs-primary); }
+  /* Color de estado mezclado con el color de texto del pack: sale mas oscuro
+     en packs claros y mas claro en packs oscuros, legible en los dos. */
+  .badge-green  { background: color-mix(in srgb, #16A34A 14%, transparent); color: color-mix(in srgb, #16A34A 62%, var(--cs-fg-1)); }
+  .badge-red    { background: color-mix(in srgb, #DC2626 14%, transparent); color: color-mix(in srgb, #DC2626 62%, var(--cs-fg-1)); }
+  .badge-orange { background: color-mix(in srgb, #D97706 14%, transparent); color: color-mix(in srgb, #D97706 62%, var(--cs-fg-1)); }
+  .badge-muted  { background: var(--cs-scrim); color: var(--cs-muted); }
+
+  /* ============================================================
+     ANIMATION SYSTEM — opt-in
+     Add `class="reveal" data-step="N"` to elements you want to
+     reveal at step N. Add `data-steps="N" data-current-step="0"`
+     to the section. The step controller (in <script> below)
+     intercepts ←/→/space and toggles `.is-on` per step.
+
+     For STATIC slides: don't add `.reveal` anywhere. Set
+     `data-steps="1" data-current-step="1"` on the section.
+     ============================================================ */
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(16px);
+    transition:
+      opacity 520ms var(--cs-ease-std),
+      transform 520ms var(--cs-ease-std),
+      filter 520ms var(--cs-ease-std),
+      clip-path 720ms var(--cs-ease-std);
+    transition-delay: var(--d, 0ms);
+    will-change: opacity, transform;
+  }
+  /* ── Variantes de entrada ──────────────────────────────────────────
+     Se combinan con .reveal: class="reveal r-rise". Un deck que revela
+     todo con el mismo fade-up se siente mecanico; variar la entrada
+     segun el tipo de elemento es lo que le da intencion.
+
+       r-rise    sube mas y con mas recorrido — titulos
+       r-fade    solo opacidad, sin desplazamiento — texto largo
+       r-scale   entra creciendo desde 96% — cifras, datos
+       r-blur    desenfoque que se resuelve — imagenes, citas
+       r-left    entra desde la izquierda — listas, pasos
+       r-wipe    se descubre de izquierda a derecha — barras, reglas
+       r-mask    el texto emerge desde abajo de su propia linea — remates
+  */
+  .reveal.r-rise  { transform: translateY(44px); }
+  .reveal.r-fade  { transform: none; }
+  .reveal.r-scale { transform: scale(.96); transform-origin: left center; }
+  .pad.center .reveal.r-scale { transform-origin: center; }
+  .reveal.r-blur  { filter: blur(14px); transform: scale(1.02); }
+  .reveal.r-left  { transform: translateX(-36px); }
+  .reveal.r-wipe  { opacity: 1; clip-path: inset(0 100% 0 0); transform: none; }
+  .reveal.r-wipe.is-on { clip-path: inset(0 0 0 0); }
+  .reveal.r-mask  { opacity: 1; clip-path: inset(0 0 110% 0); transform: none; }
+  .reveal.r-mask.is-on { clip-path: inset(-20% 0 -20% 0); }
+
+  /* .reveal.is-on tiene que ganar la cascada sobre CUALQUIER variante
+     r-rise/r-scale/r-blur/r-left de arriba: misma especificidad (dos
+     clases), asi que el orden de aparicion decide, y por eso esta regla
+     va deliberadamente DESPUES de todas ellas. Declarada antes (como
+     estaba originalmente), el elemento revelado se quedaba con el
+     transform de su animacion aplicado para siempre en la vista en vivo
+     — se notaba como texto corrido a la izquierda en cualquier .r-left
+     ya revelado. El @media print de mas abajo lo tapaba con !important,
+     por eso el PDF salia bien pero la vista en vivo no. */
+  .reveal.is-on { opacity: 1; transform: none; filter: none; }
+
+  /* Escalonado automatico: en un contenedor con .stagger, cada hijo
+     .reveal del mismo paso entra 90ms despues del anterior, sin tener
+     que escribir --d a mano en cada uno. */
+  .stagger > .reveal:nth-child(1) { --d: 0ms; }
+  .stagger > .reveal:nth-child(2) { --d: 90ms; }
+  .stagger > .reveal:nth-child(3) { --d: 180ms; }
+  .stagger > .reveal:nth-child(4) { --d: 270ms; }
+  .stagger > .reveal:nth-child(5) { --d: 360ms; }
+  .stagger > .reveal:nth-child(6) { --d: 450ms; }
+  .stagger > .reveal:nth-child(7) { --d: 540ms; }
+  .stagger > .reveal:nth-child(8) { --d: 630ms; }
+  .stagger > .reveal:nth-child(9) { --d: 720ms; }
+  .stagger > .reveal:nth-child(10) { --d: 810ms; }
+  .stagger > .reveal:nth-child(11) { --d: 900ms; }
+  .stagger > .reveal:nth-child(12) { --d: 990ms; }
+
+  /* Notas del presentador dentro de la propia slide: viajan con ella al
+     reordenar o insertar slides (el JSON de #speaker-notes va por indice y
+     se desalinea). Nunca se ven en el deck; las lee el modo presentador
+     (tecla P) y el export a PPTX. */
+  aside.notes { display: none !important; }
+
+  /* Transicion entre slides, opt-in: <deck-stage transition="fade">. El
+     default sigue siendo corte directo (regla de voz 10). */
+  ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 320ms; }
+
+  /* Iconos de reference/icons.md: trazo del color del texto, sin relleno. */
+  svg.ic { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ============================================================
+     DATOS — graficas, tabla, timeline
+     Patrones de primera clase (reference/media-and-data.md → "Datos").
+     Las graficas son declarativas: el deck trae los datos en JSON y el
+     runtime de abajo dibuja el SVG (ejes, grilla, etiquetas) con el
+     tamaño real de la figura. El agente nunca calcula coordenadas.
+     ============================================================ */
+  .sz-chart { position: relative; display: block; width: 100%; height: 520px; margin: 0; }
+  .sz-chart > svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .sz-chart .sz-grid  { stroke: var(--cs-border); stroke-width: 1.5; }
+  .sz-chart .sz-axis  { stroke: var(--cs-border-strong); stroke-width: 2; }
+  .sz-chart .sz-tick  { fill: var(--cs-muted); font: 500 22px var(--cs-font-mono); }
+  .sz-chart .sz-cat   { fill: var(--cs-muted); font: 500 24px var(--cs-font-sans); }
+  .sz-chart .sz-value { fill: var(--cs-fg-1); font: 700 28px var(--cs-font-sans); }
+  .sz-chart .sz-name  { fill: var(--c); font: 600 24px var(--cs-font-sans); }
+  .sz-chart .sz-s0 { --c: var(--cs-primary); }
+  /* Segunda serie en --cs-muted y no en --cs-secondary: muted esta validado
+     como texto sobre el fondo en todos los packs, secondary no (en terminal
+     es un gris oscuro sobre casi negro, 2.1:1). */
+  .sz-chart .sz-s1 { --c: var(--cs-muted); }
+  .sz-chart .sz-s2 { --c: var(--cs-secondary); }
+  .sz-chart .sz-s3 { --c: var(--cs-border-strong); }
+  .sz-chart .sz-hl { --c: var(--cs-accent-ink); }
+  .sz-chart .sz-value.sz-hl { fill: var(--cs-accent-ink); }
+  /* Exponentes (10²⁵): en sans, porque las monoespaciadas del sistema no
+     traen los superindices y el navegador los compone con otra fuente
+     dejando huecos entre digitos. */
+  .sz-chart .sz-tick.sz-exp { font-family: var(--cs-font-sans); }
+  .sz-chart .sz-bar {
+    fill: var(--c);
+    transform-box: fill-box; transform-origin: 50% 100%; transform: scaleY(0);
+    transition: transform 900ms var(--cs-ease-std); transition-delay: calc(var(--i, 0) * 70ms);
+  }
+  .sz-chart .sz-bar.sz-h { transform-origin: 0 50%; transform: scaleX(0); }
+  .sz-chart .sz-line {
+    fill: none; stroke: var(--c); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round;
+    transition: stroke-dashoffset 1400ms var(--cs-ease-std);
+  }
+  .sz-chart .sz-area { fill: var(--c); opacity: 0; transition: opacity 900ms ease 500ms; }
+  .sz-chart .sz-dot  { fill: var(--cs-cream); stroke: var(--c); stroke-width: 4; opacity: 0; transition: opacity 300ms ease 1100ms; }
+  .sz-chart .sz-value, .sz-chart .sz-name { opacity: 0; transition: opacity 400ms ease 900ms; }
+  /* Estado final: al revelarse el .reveal que la contiene (o de entrada si
+     la grafica no esta dentro de ninguno: sz-static lo pone el runtime). */
+  .sz-static .sz-bar, .reveal.is-on .sz-bar,
+  .sz-static .sz-bar.sz-h, .reveal.is-on .sz-bar.sz-h { transform: none; }
+  .sz-static .sz-line, .reveal.is-on .sz-line { stroke-dashoffset: 0 !important; }
+  .sz-static .sz-area, .reveal.is-on .sz-area { opacity: .12; }
+  .sz-static .sz-dot, .reveal.is-on .sz-dot,
+  .sz-static .sz-value, .reveal.is-on .sz-value,
+  .sz-static .sz-name, .reveal.is-on .sz-name { opacity: 1; }
+
+  table.sz-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .sz-table th {
+    text-align: left; padding: 0 32px 18px 0;
+    font: 600 20px var(--cs-font-mono); letter-spacing: .08em; text-transform: uppercase;
+    color: var(--cs-muted); border-bottom: 2px solid var(--cs-border-strong);
+  }
+  .sz-table td {
+    padding: 22px 32px 22px 0; vertical-align: middle;
+    font-size: 30px; line-height: 1.2; color: var(--cs-fg-2);
+    border-bottom: 1px solid var(--cs-border);
+  }
+  .sz-table tbody tr:last-child td { border-bottom: none; }
+  .sz-table .num { text-align: right; font-family: var(--cs-font-mono); }
+  .sz-table th:last-child, .sz-table td:last-child { padding-right: 0; }
+  .sz-table td strong, .sz-table td.lead { color: var(--cs-fg-1); font-weight: 600; }
+  .sz-table .sub { display: block; margin-top: 4px; font-size: 22px; color: var(--cs-muted); font-weight: 400; }
+  .sz-table tr.hl td { color: var(--cs-fg-1); font-weight: 600; background: var(--cs-cream-2); }
+  .sz-table td.hl, .sz-table tr.hl td.hl { color: var(--cs-accent-ink); font-weight: 700; }
+  /* Sobre el fondo de la fila resaltada --cs-muted queda por debajo de AA
+     (4.47:1 en paper-white, medido con check-contrast): un paso mas oscuro. */
+  .sz-table tr.hl .sub { color: var(--cs-fg-2); }
+
+  /* Timeline horizontal. La linea es el borde superior de cada paso y el
+     punto un elemento real (lo inserta el runtime): nada de ::before, que no
+     viaja al export a PPTX. */
+  ol.sz-timeline { list-style: none; margin: 0; padding: 0; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
+  .sz-timeline > li { position: relative; padding: 44px 40px 0 0; border-top: 2px solid var(--cs-border-strong); }
+  .sz-timeline > li:last-child { padding-right: 0; }
+  .sz-timeline .sz-dot {
+    position: absolute; top: -13px; left: 0; width: 24px; height: 24px; border-radius: 50%;
+    background: var(--cs-cream); border: 4px solid var(--cs-primary);
+  }
+  .sz-timeline > li.hl .sz-dot { background: var(--cs-accent-ink); border-color: var(--cs-accent-ink); }
+  .sz-timeline .when { display: block; font: 600 24px var(--cs-font-mono); letter-spacing: .04em; color: var(--cs-primary); }
+  .sz-timeline > li.hl .when { color: var(--cs-accent-ink); }
+  .sz-timeline h3 { margin: 12px 0 10px; font-size: 36px; line-height: 1.15; font-weight: 600; color: var(--cs-fg-1); }
+  .sz-timeline p { margin: 0; font-size: 24px; line-height: 1.4; color: var(--cs-fg-2); }
+
+
+  /* Act marker — top-right step indicator on multi-step slides */
+  .act-marker {
+    position: absolute;
+    top: 96px; right: 120px;
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--cs-font-mono);
+    font-size: 24px;
+    color: var(--cs-muted);
+    letter-spacing: 0.08em;
+    z-index: 2;
+  }
+  .grad .act-marker { color: rgba(255,255,255,0.5); }
+  .act-marker .step-num { color: var(--cs-fg-1); font-weight: 700; }
+  .grad .act-marker .step-num { color: #fff; }
+  /* El total ("/3") va atenuado respecto al paso actual, pero sigue siendo
+     informacion legible, no decoracion. El inline `opacity:.4` que se usaba
+     antes dejaba --cs-muted en 1.7:1 sobre blanco: por debajo de cualquier
+     umbral. .8 lo deja en ~3.3:1, que es el minimo AA para 24px. */
+  .act-marker .step-total { opacity: .8; }
+
+  /* Reduced motion — sin desplazamientos ni animaciones en loop, pero los
+     pasos se siguen revelando con un fundido corto: mostrar todo de golpe
+     le quitaba al presentador el control del ritmo de la slide. */
+  @media (prefers-reduced-motion: reduce) {
+    /* Solo la opacidad transiciona: el resto cambia de golpe mientras el
+       elemento todavia es invisible. Sin forzar transform:none, que
+       rompia los reveals centrados con translate(-50%). r-wipe/r-mask
+       ocultan con clip-path y no con opacidad: aca pasan a fundido. */
+    .reveal { transition: opacity 200ms ease !important; }
+    .reveal.r-wipe, .reveal.r-mask { opacity: 0; clip-path: none; }
+    .reveal.r-wipe.is-on, .reveal.r-mask.is-on { opacity: 1; }
+    .sz-chart .sz-bar, .sz-chart .sz-line, .sz-chart .sz-area, .sz-chart .sz-dot, .sz-chart .sz-value, .sz-chart .sz-name { transition-duration: 200ms !important; transition-delay: 0ms !important; }
+    *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+  }
+
+  /* Print / PDF — el estado final de cada slide, no el estado inicial.
+     Sin esto, exportar a PDF un deck animado produce slides en blanco:
+     los elementos .reveal nacen con opacity 0 y solo el step controller
+     (que no corre al imprimir) les pone .is-on.
+     El viewer chrome (barra de progreso, boton de fullscreen) es UI del
+     reproductor, no contenido de la slide: no debe aparecer en el PDF. */
+  @media print {
+    /* Sin transform:none !important: finalizeForPrint ya pone .is-on, y
+       forzarlo aca borraba el translate(-50%) de los reveals centrados. */
+    .reveal { opacity: 1 !important; filter: none !important; clip-path: none !important; transition: none !important; }
+    #progress-bar, #fs-btn { display: none !important; }
+    .sz-chart .sz-bar { transform: none !important; }
+    .sz-chart .sz-line { stroke-dashoffset: 0 !important; }
+    .sz-chart .sz-area { opacity: .12 !important; }
+    .sz-chart .sz-dot, .sz-chart .sz-value, .sz-chart .sz-name { opacity: 1 !important; }
+    /* background-clip:text degrada mal al imprimir: Chrome dibuja la caja del
+       gradiente como un recuadro visible alrededor de la palabra. En PDF la
+       palabra de enfasis va en color solido. */
+    .grad-word {
+      background: none !important;
+      -webkit-text-fill-color: var(--cs-primary) !important;
+      color: var(--cs-primary) !important;
+    }
+    /* Sobre .grad el fondo sigue siendo el degradado (no se aplana en
+       print): degradar a --cs-primary ahi repite casi el mismo color del
+       fondo. Mayor especificidad que la regla de arriba, gana sin
+       depender del orden. */
+    .grad .grad-word {
+      -webkit-text-fill-color: #fff !important;
+      color: #fff !important;
+    }
+  }
+
+  /* ============================================================
+     VIEWER CHROME — fullscreen button + progress bar
+     Outside deck-stage, fixed to viewport.
+     ============================================================ */
+
+  #fs-btn {
+    position: fixed;
+    top: 18px; right: 18px;
+    z-index: 2147483647;
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.2);
+    background: rgba(0,0,0,0.5);
+    color: rgba(255,255,255,0.85);
+    cursor: pointer;
+    display: grid; place-items: center;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: opacity 200ms ease, background 200ms ease, color 200ms ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #fs-btn:hover { background: rgba(0,0,0,0.7); color: #fff; }
+  #fs-btn:focus { outline: none; }
+  #fs-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(255,255,255,0.9); }
+  #fs-btn svg { width: 18px; height: 18px; display: block; }
+  #fs-btn[data-fs="1"] { opacity: 0; pointer-events: none; }
+
+  #progress-bar {
+    position: fixed;
+    top: 0; left: 0;
+    height: 3px;
+    width: 100%;
+    background: var(--cs-grad-linear);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+    z-index: 2147483646;
+    pointer-events: none;
+  }
+
+  /* ============================================================
+     INSERT SLIDE-SPECIFIC CSS BELOW
+     Copy snippets from components.md (layouts: .pq-card, terminal,
+     mockups, etc.) or animations.md (popup, SVG paths, packets) here.
+     ============================================================ */
+
+
+  @font-face { font-family: 'Anton'; src: url("assets/fonts/anton-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: 'Share Tech Mono'; src: url("assets/fonts/share-tech-mono-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: 'Archivo'; src: url("assets/fonts/archivo-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: 'Archivo'; src: url("assets/fonts/archivo-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+  @font-face { font-family: 'Archivo'; src: url("assets/fonts/archivo-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+  @font-face { font-family: 'Archivo'; src: url("assets/fonts/archivo-latin-700-normal.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+
+  /* ============================================================
+     SCD COCHABAMBA: piel del template oficial del evento
+     (fondo de grilla con corchetes neon, Anton, paneles HUD, Kori)
+     ============================================================ */
+  :root {
+    --scd-cyan: #1FD3F5;
+    --scd-lime: #D2F21E;
+    --scd-red:  #FF4B3A;
+    --scd-navy: #020D22;
+    --scd-panel: #06183A;
+    --cs-pad-x: 150px;
+    --cs-pad-top: 118px;
+    --cs-pad-bottom: 170px;
+  }
+  deck-stage > section {
+    background: var(--scd-navy) url("assets/img/bg.jpg") center / cover no-repeat;
+  }
+  .grad { background: var(--scd-navy) url("assets/img/bg.jpg") center / cover no-repeat !important; }
+  .grad::before { display: none; }
+
+  .footer { left: 150px; right: 150px; bottom: 96px; font-family: var(--cs-font-mono); font-size: 22px; letter-spacing: .14em; text-transform: uppercase; }
+  .footer .left { color: var(--scd-cyan); opacity: .8; }
+
+  .eyebrow {
+    font-family: var(--cs-font-mono); font-weight: 400; letter-spacing: .32em;
+    color: var(--scd-cyan); display: inline-flex; align-items: center; gap: 18px; align-self: flex-start;
+  }
+  .pad.center .eyebrow { align-self: center; }
+  .eyebrow::before, .eyebrow::after { content: ""; width: 14px; height: 34px; border: 3px solid var(--scd-cyan); }
+  .eyebrow::before { border-right: none; }
+  .eyebrow::after  { border-left: none; }
+
+  h1.cover, h1.cover-md, h2.title, .ts-title, .ts-title-md {
+    font-family: var(--cs-font-heading); font-weight: 400; text-transform: uppercase;
+    letter-spacing: .005em; color: #fff;
+  }
+  h1.cover { font-size: 150px; line-height: .98; }
+  h1.cover-md { font-size: 104px; line-height: 1.02; }
+  h2.title { font-size: 92px; line-height: 1.0; margin-bottom: 48px; }
+  .ts-title { font-size: 170px; }
+  .grad-word { background: linear-gradient(90deg in oklch, var(--scd-cyan), var(--scd-lime)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lime { color: var(--scd-lime); }
+  .cyan { color: var(--scd-cyan); }
+  .red  { color: var(--scd-red); }
+  .subtitle, .ts-tagline { color: var(--cs-body); }
+  .payoff { font-family: var(--cs-font-mono); color: var(--scd-lime); font-size: 30px; letter-spacing: .04em; }
+  .stat-source { font-family: var(--cs-font-mono); letter-spacing: .02em; }
+
+  /* Kori, la mascota oficial */
+  .kori { position: absolute; z-index: 3; height: auto; pointer-events: none;
+          filter: drop-shadow(0 0 28px rgba(31,211,245,.28)); }
+
+  /* Panel HUD: borde fino cian, barra de acento arriba, rayas abajo */
+  .hud {
+    position: relative; background: linear-gradient(160deg, rgba(10,40,90,.72), rgba(4,20,48,.82));
+    border: 2px solid rgba(31,211,245,.45);
+    clip-path: polygon(0 0, calc(100% - 34px) 0, 100% 34px, 100% 100%, 34px 100%, 0 calc(100% - 34px));
+    padding: 40px 44px;
+  }
+  .hud::before { content: ""; position: absolute; left: 0; top: 0; width: 150px; height: 7px; background: var(--bar, var(--scd-cyan)); }
+  .hud::after  { content: ""; position: absolute; right: 30px; bottom: 16px; width: 70px; height: 12px;
+                 background: repeating-linear-gradient(115deg, var(--bar, var(--scd-cyan)) 0 6px, transparent 6px 14px); opacity: .7; }
+  .hud.lime { --bar: var(--scd-lime); border-color: rgba(210,242,30,.55); color: inherit; }
+  .hud.red  { --bar: var(--scd-red);  border-color: rgba(255,75,58,.55); color: inherit; }
+  .hud h3 { font-family: var(--cs-font-heading); font-weight: 400; text-transform: uppercase; color: #fff; font-size: 46px; line-height: 1.02; margin: 10px 0 14px; letter-spacing: .01em; }
+  .hud p { font-size: 26px; line-height: 1.4; color: var(--cs-body); margin: 0; }
+  .hud .tag { font-family: var(--cs-font-mono); font-size: 22px; letter-spacing: .2em; text-transform: uppercase; color: var(--bar, var(--scd-cyan)); }
+
+  /* Anillo numerado 01 02 03 */
+  .ring { width: 92px; height: 92px; border-radius: 50%; display: grid; place-items: center; flex: none;
+          font-family: var(--cs-font-mono); font-size: 32px; color: #fff; position: relative;
+          background: radial-gradient(circle, rgba(6,24,58,1) 60%, transparent 61%), conic-gradient(var(--scd-cyan) 0 62%, var(--scd-lime) 62% 80%, rgba(31,211,245,.25) 80% 100%); }
+  .ring.lime { background: radial-gradient(circle, rgba(6,24,58,1) 60%, transparent 61%), conic-gradient(var(--scd-lime) 0 70%, var(--scd-cyan) 70% 85%, rgba(210,242,30,.25) 85% 100%); }
+  .ring.red { background: radial-gradient(circle, rgba(6,24,58,1) 60%, transparent 61%), conic-gradient(var(--scd-red) 0 70%, var(--scd-cyan) 70% 85%, rgba(255,75,58,.25) 85% 100%); }
+
+  /* Foto en paralelogramo, como el template */
+  .skew { position: absolute; overflow: hidden; clip-path: polygon(34% 0, 100% 0, 66% 100%, 0 100%); }
+  .skew img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  /* Barras inclinadas del kit UI */
+  .slant { height: 34px; clip-path: polygon(0 0, 100% 0, calc(100% - 24px) 100%, 0 100%); background: linear-gradient(90deg, var(--c, var(--scd-cyan)), color-mix(in srgb, var(--c, var(--scd-cyan)) 60%, transparent)); }
+
+  /* Cita con comillas neon */
+  .quote { position: relative; padding: 18px 0 30px 120px; border-bottom: 2px solid rgba(31,211,245,.5); max-width: 1450px; }
+  .quote::before { content: "\201C"; position: absolute; left: 0; top: -40px; font-family: var(--cs-font-heading); font-size: 220px; line-height: 1; color: var(--scd-lime); }
+  .quote::after { content: ""; position: absolute; right: -6px; bottom: -7px; width: 12px; height: 12px; border-radius: 50%; background: var(--scd-cyan); }
+  .quote blockquote { margin: 0; font-family: var(--cs-font-heading); text-transform: uppercase; font-size: 84px; line-height: 1.04; color: #fff; }
+  .quote cite { display: block; margin-top: 26px; font-style: normal; font-family: var(--cs-font-mono); font-size: 24px; letter-spacing: .14em; color: var(--scd-cyan); text-transform: uppercase; }
+
+  /* Cifra grande */
+  .big { font-family: var(--cs-font-heading); line-height: 1.02; color: #fff; font-variant-numeric: tabular-nums; }
+  .big .unit { font-size: .5em; }
+
+  /* Terminal */
+  .term { background: #010814; border: 2px solid rgba(31,211,245,.4); border-radius: 14px; overflow: hidden; font-family: var(--cs-font-mono); }
+  .term .bar { display: flex; gap: 10px; padding: 16px 20px; border-bottom: 1px solid rgba(31,211,245,.25); align-items: center; }
+  .term .bar i { width: 14px; height: 14px; border-radius: 50%; background: var(--scd-cyan); opacity: .7; }
+  .term .bar i:nth-child(2) { background: var(--scd-lime); } .term .bar i:nth-child(3) { background: var(--scd-red); }
+  .term .bar span { margin-left: 14px; font-size: 22px; color: var(--cs-muted); letter-spacing: .08em; }
+  .term pre { margin: 0; padding: 26px 30px; font-family: inherit; font-size: 27px; line-height: 1.6; color: var(--cs-body); white-space: pre; }
+  .term .p { color: var(--scd-lime); } .term .ok { color: var(--scd-cyan); } .term .ko { color: var(--scd-red); } .term .dim { color: var(--cs-muted); }
+
+  /* Chips */
+  .chips { display: flex; flex-wrap: wrap; gap: 14px; }
+  .chip { font-family: var(--cs-font-mono); font-size: 22px; letter-spacing: .08em; padding: 10px 18px; border: 1.5px solid rgba(31,211,245,.5); color: var(--cs-body); }
+  .chip.lime { border-color: var(--scd-lime); color: var(--scd-lime); }
+
+  .hud.node::after { display: none; }
+  .sz-timeline .when { font-family: var(--cs-font-mono); font-size: 26px; }
+  .sz-timeline h3 { font-family: var(--cs-font-heading); font-weight: 400; text-transform: uppercase; font-size: 54px; color: #fff; }
+  .sz-timeline p { font-size: 28px; }
+
+</style>
+</head>
+<body>
+
+<deck-stage width="1920" height="1080">
+
+  <!-- ============================================================
+       INSERT SLIDES HERE
+       Each slide is a <section> with these conventions:
+       - data-label="NN Title"            (used for nav labels)
+       - data-steps="N" data-current-step="0"   (animated)
+         OR data-steps="1" data-current-step="1" (static)
+       - class="grad"                     (gradient bg, for cover)
+       - <div class="pad">                (standard padding frame)
+       - <div class="pad center">         (vertically centered, for transitions)
+       - <div class="footer">             (logo + speaker + slide num)
+
+       Catalog references:
+       - components.md  → layout patterns
+       - animations.md  → animation techniques
+       - icons.md       → SVG icons library
+       ============================================================ -->
+
+  
+  <section class="grad" data-label="01 Portada" data-steps="1" data-current-step="1">
+    <img src="assets/img/cristo.png" alt="" style="position:absolute;left:0;top:0;height:1080px;z-index:0">
+    <img class="kori" src="assets/kori/alegre.png" alt="Kori, mascota del Student Community Day" style="right:140px;bottom:130px;width:230px">
+    <div class="pad" style="justify-content:center;padding-left:640px">
+      <div class="eyebrow">Student Community Day · Cochabamba</div>
+      <h1 class="cover" style="font-size:108px;line-height:1.02">De programar con IA<br>a construir con <span class="grad-word">agentes</span></h1>
+      <div class="subtitle" style="font-family:var(--cs-font-mono);font-size:32px;letter-spacing:.06em;margin-top:34px">Harness · Skills · Loops · Orquestación con Orca</div>
+      <div class="payoff" style="margin-top:44px;color:var(--scd-cyan)">10 OCTUBRE 2026</div>
+    </div>
+    <aside class="notes"><p>Antes de presentarme, lanzo una tarea real a tres agentes en Orca y los dejo corriendo en la pantalla de al lado. Vamos a volver a ellos más tarde. Hoy no vengo a contarles cómo usar agentes, sino cómo se construye el sistema donde trabajan.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">01</span></div>
+    </div>
+  </section>
+
+  <section data-label="02 Speaker" data-steps="1" data-current-step="1">
+    <div style="position:absolute;left:230px;top:200px;width:620px;height:620px;border-radius:50%;padding:12px;background:conic-gradient(from 200deg, var(--scd-cyan) 0 55%, var(--scd-lime) 55% 72%, rgba(31,211,245,.18) 72% 100%)">
+      <img src="assets/img/speaker.jpg" alt="Foto de Rodrigo Torrico" style="width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;border:8px solid var(--scd-navy)">
+    </div>
+    <img class="kori" src="assets/kori/asomado.png" alt="Kori, mascota del Student Community Day" style="left:430px;top:105px;width:230px">
+    <div class="pad" style="justify-content:center;padding-left:960px">
+      <div class="eyebrow">Quién te habla</div>
+      <h2 class="title" style="font-size:120px;margin-bottom:30px">Rodrigo<br>Torrico</h2>
+      <div style="font-size:32px;line-height:1.5;color:#fff">Senior Software Engineer · Unosquare<br><span style="color:var(--cs-body)">7 años full-stack · Founder SaaS<br>Mentor de otros devs</span></div>
+      <div style="display:flex;flex-direction:column;gap:18px;margin-top:46px">
+        <div style="display:flex;gap:22px;align-items:center"><span class="chip lime" style="min-width:150px;text-align:center">Instagram</span><span class="mono" style="font-size:40px;color:var(--scd-cyan)">@tokidev.ai</span></div>
+        <div style="display:flex;gap:22px;align-items:center"><span class="chip" style="min-width:150px;text-align:center">GitHub</span><span class="mono" style="font-size:40px;color:var(--scd-cyan)">@tokidev-ai</span></div>
+      </div>
+    </div>
+    <aside class="notes"><p>Me presento en 30 segundos: soy Rodrigo Torrico, Senior Software Engineer en Unosquare, siete años haciendo full-stack, construyo productos SaaS y mentoreo a otros devs. Todo lo que van a ver hoy lo uso en mi trabajo diario. Si quieren el material y más contenido sobre agentes: Instagram @tokidev.ai y GitHub @tokidev-ai.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">02</span></div>
+    </div>
+  </section>
+
+  <section data-label="03 Gancho cero lineas" data-steps="3" data-current-step="0">
+    <img class="kori" src="assets/kori/sorprendido.png" alt="Kori, mascota del Student Community Day" style="right:150px;bottom:160px;width:380px">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">Antes de empezar</div>
+      <h2 class="title reveal r-rise" data-step="1" style="max-width:1300px">Un millón de líneas. ¿Cuántas a mano?</h2>
+      <div style="display:flex;align-items:flex-end;gap:80px">
+        <div class="reveal r-scale" data-step="2">
+          <div class="big" style="font-size:300px;color:var(--scd-lime)">0</div>
+        </div>
+        <div class="reveal r-left" data-step="3" style="display:flex;flex-direction:column;gap:22px;padding-bottom:30px">
+          <div style="font-size:34px;color:#fff"><span class="cyan mono">3</span> personas · <span class="cyan mono">5</span> meses · <span class="cyan mono">+1.500</span> PRs</div>
+          <div class="stat-source">Fuente: OpenAI, Harness engineering, febrero 2026</div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes"><p>Pregunta a la sala: un equipo de OpenAI construyó un producto de casi un millón de líneas en cinco meses. ¿Cuántas escribieron a mano? Dejo que respondan. Cero. Eran tres personas y más de mil quinientos PRs. El trabajo humano no desapareció: se movió al entorno. Y la promesa: al final de la charla vas a saber exactamente qué hacer el lunes, y volvemos a esos tres agentes.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">03</span></div>
+    </div>
+  </section>
+
+  <section data-label="04 Agenda" data-steps="3" data-current-step="0">
+    <img class="kori" src="assets/kori/guinando.png" alt="Kori, mascota del Student Community Day" style="right:150px;top:110px;width:300px">
+    <div class="pad mid">
+      <div class="eyebrow reveal" data-step="1">El viaje de hoy</div>
+      <h2 class="title reveal r-rise" data-step="1">Seis paradas, un proyecto</h2>
+      <div class="stagger" style="display:flex;justify-content:space-between;margin-top:40px;position:relative">
+        <div class="slant reveal r-wipe" data-step="2" style="position:absolute;left:100px;right:100px;top:40px;height:8px;clip-path:none;opacity:.5"></div>
+        <div class="reveal r-rise" data-step="2" style="display:flex;flex-direction:column;align-items:center;gap:20px;width:200px"><div class="ring">01</div><div style="font-size:28px;color:#fff;text-align:center">Dónde estamos</div></div><div class="reveal r-rise" data-step="2" style="display:flex;flex-direction:column;align-items:center;gap:20px;width:200px"><div class="ring">02</div><div style="font-size:28px;color:#fff;text-align:center">Harness</div></div><div class="reveal r-rise" data-step="2" style="display:flex;flex-direction:column;align-items:center;gap:20px;width:200px"><div class="ring">03</div><div style="font-size:28px;color:#fff;text-align:center">Skills</div></div><div class="reveal r-rise" data-step="2" style="display:flex;flex-direction:column;align-items:center;gap:20px;width:200px"><div class="ring">04</div><div style="font-size:28px;color:#fff;text-align:center">Loops</div></div><div class="reveal r-rise" data-step="2" style="display:flex;flex-direction:column;align-items:center;gap:20px;width:200px"><div class="ring">05</div><div style="font-size:28px;color:#fff;text-align:center">Orca</div></div><div class="reveal r-rise" data-step="2" style="display:flex;flex-direction:column;align-items:center;gap:20px;width:200px"><div class="ring lime">06</div><div style="font-size:28px;color:#fff;text-align:center">Tu ruta</div></div>
+      </div>
+      <div class="payoff reveal r-mask" data-step="3" style="margin-top:70px">Al final: tu plan para el lunes</div>
+    </div>
+    <aside class="notes"><p>Este es el recorrido. Todo lo vamos a aplicar a un solo proyecto real (aquí cuento cuál es el mío). En cada parada el proyecto mejora algo visible. Y la última parada es la que más les importa: qué hacer el lunes.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">04</span></div>
+    </div>
+  </section>
+
+  <section data-label="05 Donde estamos" data-steps="2" data-current-step="0">
+    <div class="skew reveal r-blur" data-step="1" style="right:150px;top:250px;width:880px;height:560px"><img src="assets/img/laptop.jpg" alt="Desarrollador trabajando en una laptop con código"></div>
+    <img class="kori" src="assets/kori/asomado.png" alt="Kori, mascota del Student Community Day" style="right:560px;top:150px;width:260px">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">01 · Dónde estamos</div>
+      <h2 class="title reveal r-rise" data-step="1" style="max-width:800px">Usar agentes<br>ya es el piso</h2>
+      <div class="stagger" style="display:flex;flex-direction:column;gap:26px;max-width:760px">
+        <div class="reveal r-left" data-step="2" style="display:flex;align-items:baseline;gap:28px"><div class="big" style="font-size:110px" data-counter="90" data-target-step="2">0<span class="unit">%</span></div><div style="font-size:28px">usa agentes de código cada semana</div></div>
+        <div class="reveal r-left" data-step="2" style="display:flex;align-items:baseline;gap:28px"><div class="big" style="font-size:110px" data-counter="68" data-target-step="2">0<span class="unit">%</span></div><div style="font-size:28px">los usa todos los días</div></div>
+        <div class="reveal r-left" data-step="2" style="display:flex;align-items:baseline;gap:28px"><div class="big lime" style="font-size:110px;color:var(--scd-lime)" data-counter="47" data-target-step="2">0<span class="unit">%</span></div><div style="font-size:28px">de su código lo escribe un agente</div></div>
+      </div>
+      <div class="stat-source reveal" data-step="2" style="margin-top:22px">JetBrains, 2026, +15.000 devs (vía charla Agent First)</div>
+    </div>
+    <aside class="notes"><p>En 2026 usar agentes dejó de ser ventaja: es el piso. Nueve de cada diez devs los usan cada semana y casi la mitad del código ya lo escribe un agente. Lo que diferencia ahora es qué tan bien está armado el sistema alrededor del agente. Verificar la cifra en la fuente original de JetBrains antes de presentar.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">05</span></div>
+    </div>
+  </section>
+
+  <section data-label="06 Brecha de confianza" data-steps="3" data-current-step="0">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">01 · Dónde estamos</div>
+      <h2 class="title reveal r-rise" data-step="1">Confiamos poco y revisamos menos</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:70px;margin-top:20px">
+        <div class="reveal r-scale" data-step="2">
+          <div class="big" style="font-size:200px;color:var(--scd-cyan)" data-counter="96" data-target-step="2">0<span class="unit">%</span></div>
+          <div class="slant reveal r-wipe" data-step="2" style="width:96%;margin:20px 0 22px"></div>
+          <div style="font-size:32px;color:#fff">no confía del todo en el código de la IA</div>
+        </div>
+        <div class="reveal r-scale" data-step="3">
+          <div class="big" style="font-size:200px;color:var(--scd-red)" data-counter="48" data-target-step="3">0<span class="unit">%</span></div>
+          <div class="slant reveal r-wipe" data-step="3" style="--c:var(--scd-red);width:48%;margin:20px 0 22px"></div>
+          <div style="font-size:32px;color:#fff">lo revisa siempre antes del commit</div>
+        </div>
+      </div>
+      <div class="stat-source reveal" data-step="3" style="margin-top:40px">Sonar, enero 2026</div>
+    </div>
+    <aside class="notes"><p>Casi nadie confía del todo en el código que genera la IA, pero solo la mitad lo revisa siempre antes de hacer commit. Esa brecha es el problema que vamos a resolver hoy: no con más desconfianza, sino con un sistema que verifique por nosotros. Broma posible: revisión del PR de mil líneas, LGTM.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">06</span></div>
+    </div>
+  </section>
+
+  <section data-label="07 Escalera de niveles" data-steps="3" data-current-step="0">
+    <img class="kori" src="assets/kori/curioso.png" alt="Kori, mascota del Student Community Day" style="right:150px;bottom:160px;width:300px">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">01 · Dónde estamos</div>
+      <h2 class="title reveal r-rise" data-step="1">¿En qué nivel estás?</h2>
+      <div class="stagger" style="position:relative;height:500px;width:1240px"><div class="reveal r-rise" data-step="2" style="position:absolute;left:0px;bottom:0px;width:195px">
+      <div style="font-family:var(--cs-font-heading);font-size:58px;color:var(--scd-cyan)">L0</div>
+      <div style="font-size:23px;line-height:1.25;color:var(--cs-body);min-height:60px">Autocompletado</div>
+      <div class="slant" style="--c:var(--scd-cyan);height:10px;margin-top:10px;clip-path:none"></div></div><div class="reveal r-rise" data-step="2" style="position:absolute;left:205px;bottom:62px;width:195px">
+      <div style="font-family:var(--cs-font-heading);font-size:58px;color:var(--scd-cyan)">L1</div>
+      <div style="font-size:23px;line-height:1.25;color:var(--cs-body);min-height:60px">Pasante</div>
+      <div class="slant" style="--c:var(--scd-cyan);height:10px;margin-top:10px;clip-path:none"></div></div><div class="reveal r-rise" data-step="2" style="position:absolute;left:410px;bottom:124px;width:195px">
+      <div style="font-family:var(--cs-font-heading);font-size:58px;color:var(--scd-lime)">L2</div>
+      <div style="font-size:23px;line-height:1.25;color:#fff;min-height:60px">Junior que revisas línea a línea</div>
+      <div class="slant" style="--c:var(--scd-lime);height:18px;margin-top:10px;clip-path:none"></div></div><div class="reveal r-rise" data-step="2" style="position:absolute;left:615px;bottom:186px;width:195px">
+      <div style="font-family:var(--cs-font-heading);font-size:58px;color:var(--scd-cyan)">L3</div>
+      <div style="font-size:23px;line-height:1.25;color:var(--cs-body);min-height:60px">Dev que revisas sin escribir</div>
+      <div class="slant" style="--c:var(--scd-cyan);height:10px;margin-top:10px;clip-path:none"></div></div><div class="reveal r-rise" data-step="2" style="position:absolute;left:820px;bottom:248px;width:195px">
+      <div style="font-family:var(--cs-font-heading);font-size:58px;color:var(--scd-cyan)">L4</div>
+      <div style="font-size:23px;line-height:1.25;color:var(--cs-body);min-height:60px">Equipo: tú escribes specs</div>
+      <div class="slant" style="--c:var(--scd-cyan);height:10px;margin-top:10px;clip-path:none"></div></div><div class="reveal r-rise" data-step="2" style="position:absolute;left:1025px;bottom:310px;width:195px">
+      <div style="font-family:var(--cs-font-heading);font-size:58px;color:var(--scd-cyan)">L5</div>
+      <div style="font-size:23px;line-height:1.25;color:var(--cs-body);min-height:60px">Fábrica oscura</div>
+      <div class="slant" style="--c:var(--scd-cyan);height:10px;margin-top:10px;clip-path:none"></div></div>
+        <div class="chip lime reveal r-scale" data-step="3" style="position:absolute;left:410px;bottom:20px;background:rgba(2,13,34,.9)">~90% está aquí</div>
+      </div>
+      <div class="stat-source reveal" data-step="2">Niveles de Dan Shapiro, enero 2026</div>
+    </div>
+    <aside class="notes"><p>Momento interactivo: mano alzada. ¿Quién está en L0, autocompletado? ¿L1? ¿L2, un junior al que revisas línea por línea? ¿L3? Según Shapiro, cerca del 90% de quienes se dicen AI native está en L2 sin saberlo. Pregunta: ¿qué te impide subir uno? Casi siempre es contexto, verificación o confianza. Eso es lo que cubre el resto de la charla. En mi proyecto: le pedí una función, la hizo, pero a su manera. Funcionó, pero no era lo que quería.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">07</span></div>
+    </div>
+  </section>
+
+  <section data-label="08 Adivina el resultado" data-steps="3" data-current-step="0">
+    <img class="kori" src="assets/kori/pensando.png" alt="Kori, mascota del Student Community Day" style="right:150px;top:110px;width:270px">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">01 · Impacto real</div>
+      <h2 class="title reveal r-rise" data-step="1" style="max-width:1300px">Devs expertos con IA: ¿más rápidos o más lentos?</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:56px;max-width:1450px">
+        <div class="hud reveal r-scale" data-step="2" data-overlap-ok>
+          <div class="tag">Lo que creían</div>
+          <div class="big" style="font-size:150px;margin-top:14px;color:var(--scd-cyan)">+20<span class="unit">%</span></div>
+          <p>más rápidos</p>
+        </div>
+        <div class="hud red reveal r-scale" data-step="3" data-overlap-ok>
+          <div class="tag">Lo que se midió</div>
+          <div class="big" style="font-size:150px;margin-top:14px;color:var(--scd-red)">−19<span class="unit">%</span></div>
+          <p>más lentos</p>
+        </div>
+      </div>
+      <div class="stat-source reveal" data-step="3" style="margin-top:30px">METR, 2025. Su seguimiento de feb. 2026 sugiere más aceleración hoy</div>
+    </div>
+    <aside class="notes"><p>Antes de mostrar el dato, la sala adivina: devs experimentados, en repos que conocen, con IA, ¿más rápidos o más lentos? Voto a mano alzada. Revelo: creían ser 20% más rápidos y fueron 19% más lentos. La lección no es que la IA frene: es que la percepción no es medición. Matiz honesto: el propio METR, en su seguimiento de febrero de 2026 con 57 devs y más de 800 tareas, dice que probablemente hoy hay más aceleración. No citar el 19% como hecho actual.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">08</span></div>
+    </div>
+  </section>
+
+  <section data-label="09 La IA amplifica" data-steps="2" data-current-step="0">
+    <img class="kori" src="assets/kori/confiado.png" alt="Kori, mascota del Student Community Day" style="right:150px;bottom:160px;width:300px">
+    <div class="pad" style="justify-content:center">
+      <div class="quote reveal r-blur" data-step="1" style="max-width:1230px">
+        <blockquote>La IA amplifica: si tu base es buena, mejor. Si es caos, más caos</blockquote>
+        <cite>DORA 2025 · Faros · Stanford</cite>
+      </div>
+      <div class="payoff reveal r-mask" data-step="2" style="margin-top:50px;color:var(--scd-cyan)">Mide entrega con DORA o DX Core 4, no con sensaciones</div>
+    </div>
+    <aside class="notes"><p>DORA 2025: más del 80% reporta mejor productividad, pero varios análisis ven que la ganancia individual se diluye a nivel de equipo y la estabilidad puede empeorar. La IA es un amplificador. El cuello de botella se movió de escribir código a revisar y dar contexto. Para los estudiantes: ganan más velocidad bruta pero arriesgan su aprendizaje. Usen los agentes para entender, no solo para producir.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">09</span></div>
+    </div>
+  </section>
+
+  <section data-label="10 Transicion harness" data-steps="1" data-current-step="1">
+    <img class="kori" src="assets/kori/emocionado.png" alt="Kori, mascota del Student Community Day" style="right:160px;bottom:150px;width:250px">
+    <div class="pad center">
+      <div class="eyebrow">02 · Harness</div>
+      <h1 class="ts-title" style="font-size:150px">Agent = Model + <span class="grad-word">Harness</span></h1>
+      <div class="ts-tagline" style="max-width:1050px">El caballo es fuerte. Sin arnés, no tira del carro hacia donde quieres</div>
+    </div>
+    <aside class="notes"><p>Un agente es un modelo dentro de un harness: todo lo que decide qué ve el modelo, qué herramientas usa, cómo recuerda, cómo se verifica su trabajo y qué tiene permitido hacer. Analogía: el arnés de un caballo, o el tablero de un auto. El término lo popularizó Mitchell Hashimoto y lo desarrolló OpenAI con el experimento de cero líneas.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">10</span></div>
+    </div>
+  </section>
+
+  <section data-label="11 Del prompt al entorno" data-steps="4" data-current-step="0">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">02 · Harness</div>
+      <h2 class="title reveal r-rise" data-step="1">Del prompt al entorno</h2>
+      <div style="display:flex;gap:28px;align-items:stretch"><div class="hud reveal r-rise" data-step="2" style="flex:1;min-height:330px"><div class="tag">Lenguaje</div><h3>Prompt engineering</h3><p>Cómo pides</p></div><div class="reveal r-fade" data-step="3" style="font-size:60px;color:var(--scd-cyan);align-self:center">›</div><div class="hud reveal r-rise" data-step="3" style="flex:1;min-height:330px"><div class="tag">Información</div><h3>Context engineering</h3><p>Qué ve el modelo</p></div><div class="reveal r-fade" data-step="4" style="font-size:60px;color:var(--scd-cyan);align-self:center">›</div><div class="hud lime reveal r-rise" data-step="4" style="flex:1;min-height:330px"><div class="tag">Entorno</div><h3>Harness engineering</h3><p>Cómo actúa y se corrige</p></div></div>
+      <div class="payoff reveal r-mask" data-step="4" style="margin-top:50px">No mejores el prompt, mejora el entorno</div>
+    </div>
+    <aside class="notes"><p>Tres capas que son la línea de tiempo de estos años. Prompt engineering: cómo redactas la petición. Context engineering: qué información ve el modelo. Harness engineering: cómo actúa y se corrige el agente. La lección central de OpenAI: cuando un agente falla, no es un problema de prompt; es una capacidad, un contexto o una estructura que falta en el entorno.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">11</span></div>
+    </div>
+  </section>
+
+  <section data-label="12 La pregunta repetida" data-steps="2" data-current-step="0">
+    <img class="kori" src="assets/kori/saludando.png" alt="Kori, mascota del Student Community Day" style="right:150px;bottom:160px;width:340px">
+    <div class="pad" style="justify-content:center">
+      <div class="eyebrow reveal" data-step="1">Levanta la mano si…</div>
+      <div class="reveal r-rise" data-step="1" style="font-size:44px;color:#fff;max-width:1150px;line-height:1.3;margin-bottom:60px">le explicaste lo mismo dos veces a un agente</div>
+      <div class="quote reveal r-blur" data-step="2" style="max-width:1250px">
+        <blockquote style="font-size:72px">Cada pregunta que un agente te hace dos veces es una decisión que no documentaste</blockquote>
+        <cite>Pedro Anze · Agent First</cite>
+      </div>
+    </div>
+    <aside class="notes"><p>Momento interactivo: que levante la mano quien le haya explicado lo mismo dos veces a un agente. Casi todos. Esta regla es harness engineering en una frase. En mi proyecto: el agente me preguntó por tercera vez cómo correr los tests. Lo escribí en AGENTS.md y dejó de preguntar.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">12</span></div>
+    </div>
+  </section>
+
+  <section data-label="13 Guias y sensores" data-steps="3" data-current-step="0">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">02 · Harness</div>
+      <h2 class="title reveal r-rise" data-step="1">Guías antes, sensores después</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:56px">
+        <div class="hud reveal r-left" data-step="2" style="min-height:430px">
+          <div class="tag">Feedforward · antes de actuar</div>
+          <h3 style="font-size:76px">Guías</h3>
+          <div class="chips" style="margin-top:24px"><span class="chip">AGENTS.md</span><span class="chip">skills</span><span class="chip">convenciones</span><span class="chip">docs de diseño</span><span class="chip">scripts de arranque</span></div>
+        </div>
+        <div class="hud lime reveal r-left" data-step="3" style="min-height:430px">
+          <div class="tag">Feedback · durante y después</div>
+          <h3 style="font-size:76px">Sensores</h3>
+          <div class="chips" style="margin-top:24px"><span class="chip lime">linters</span><span class="chip lime">tipos</span><span class="chip lime">tests</span><span class="chip lime">agente revisor</span><span class="chip lime">observabilidad</span></div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes"><p>Un modelo mental útil. Las guías actúan antes de que el agente actúe: AGENTS.md, skills, convenciones, documentos de diseño. Los sensores actúan durante o después: lint, tipos, tests, revisión por otro agente. Un buen harness tiene las dos cosas. Aquí va el fallo en vivo: muestro un caso preparado donde el agente cambia algo fuera de alcance y un test o una regla lo detecta.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">13</span></div>
+    </div>
+  </section>
+
+  <section data-label="14 AGENTS.md" data-steps="3" data-current-step="0">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">02 · Harness</div>
+      <h2 class="title reveal r-rise" data-step="1">Empieza por un archivo</h2>
+      <div style="display:grid;grid-template-columns:1.15fr .85fr;gap:70px;align-items:center">
+        <div class="term reveal r-blur" data-step="2">
+          <div class="bar"><i></i><i></i><i></i><span>AGENTS.md</span></div>
+<pre><span class="p"># Proyecto</span>
+API de reservas del centro de estudiantes
+<span class="p">## Cómo correrlo</span>
+<span class="ok">pnpm dev</span>  ·  <span class="ok">pnpm test</span>
+<span class="p">## Convenciones</span>
+Código en inglés
+<span class="p">## Decisiones tomadas</span>
+<span class="dim">No tocar /payments sin aprobación</span></pre>
+        </div>
+        <div class="reveal r-left" data-step="3">
+          <div class="big" style="font-size:66px;line-height:1.05;text-transform:uppercase">Actualízalo cada vez que el agente <span class="lime">falle</span></div>
+          <div class="stat-source" style="margin-top:24px">Regla de Greg Brockman</div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes"><p>AGENTS.md en la raíz del repo: qué es el proyecto, cómo correrlo, convenciones y decisiones ya tomadas. Funciona en Claude Code, Codex y la mayoría de agentes. La regla de Brockman: actualízalo cada vez que el agente falle. Cambiar el ejemplo por el AGENTS.md real de mi proyecto.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">14</span></div>
+    </div>
+  </section>
+
+  <section data-label="15 Harness en seis pasos" data-steps="2" data-current-step="0">
+    <img class="kori" src="assets/kori/aplaudiendo.png" alt="Kori, mascota del Student Community Day" style="right:160px;bottom:150px;width:240px">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">02 · Harness</div>
+      <h2 class="title reveal r-rise" data-step="1">Tu harness en seis pasos</h2>
+      <div class="stagger" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:80px 50px;margin-top:50px;max-width:1350px"><div class="reveal r-rise" data-step="2" style="display:flex;gap:26px;align-items:center"><div class="ring">01</div><div><div style="font-family:var(--cs-font-heading);font-size:40px;text-transform:uppercase;color:#fff">AGENTS.md</div><div style="font-size:24px;color:var(--cs-body)">En la raíz del repo</div></div></div><div class="reveal r-rise" data-step="2" style="display:flex;gap:26px;align-items:center"><div class="ring">02</div><div><div style="font-family:var(--cs-font-heading);font-size:40px;text-transform:uppercase;color:#fff">Repo legible</div><div style="font-size:24px;color:var(--cs-body)">Planes dentro del repo</div></div></div><div class="reveal r-rise" data-step="2" style="display:flex;gap:26px;align-items:center"><div class="ring">03</div><div><div style="font-family:var(--cs-font-heading);font-size:40px;text-transform:uppercase;color:#fff">Sensores</div><div style="font-size:24px;color:var(--cs-body)">Lint, tipos y tests</div></div></div><div class="reveal r-rise" data-step="2" style="display:flex;gap:26px;align-items:center"><div class="ring">04</div><div><div style="font-family:var(--cs-font-heading);font-size:40px;text-transform:uppercase;color:#fff">Observable</div><div style="font-size:24px;color:var(--cs-body)">Logs y trazas</div></div></div><div class="reveal r-rise" data-step="2" style="display:flex;gap:26px;align-items:center"><div class="ring">05</div><div><div style="font-family:var(--cs-font-heading);font-size:40px;text-transform:uppercase;color:#fff">Revisor</div><div style="font-size:24px;color:var(--cs-body)">Decide un humano</div></div></div><div class="reveal r-rise" data-step="2" style="display:flex;gap:26px;align-items:center"><div class="ring lime">06</div><div><div style="font-family:var(--cs-font-heading);font-size:40px;text-transform:uppercase;color:#fff">Itera</div><div style="font-size:24px;color:var(--cs-body)">Fallo repetido, nueva regla</div></div></div></div>
+    </div>
+    <aside class="notes"><p>Cómo construir un harness, paso a paso. Uno: AGENTS.md. Dos: repo legible para agentes, el conocimiento vive en el repo y no en tu cabeza. Tres: sensores rápidos que el agente corre solo antes de pedir revisión. Cuatro: que pueda ejecutar y observar la app. Cinco: un agente revisor, con la decisión final en un humano. Seis: itera el harness, no el prompt. Cada fallo repetido se convierte en una regla, un test o una skill.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">15</span></div>
+    </div>
+  </section>
+
+  <section data-label="16 Que es una skill" data-steps="3" data-current-step="0">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">03 · Skills</div>
+      <h2 class="title reveal r-rise" data-step="1" style="max-width:1500px">MCP le da manos, las skills le dan <span class="grad-word">hábitos</span></h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center">
+        <div class="term reveal r-blur" data-step="2">
+          <div class="bar"><i></i><i></i><i></i><span>mi-skill/</span></div>
+<pre><span class="p">SKILL.md</span>      <span class="dim">qué hace y cuándo</span>
+<span class="ok">scripts/</span>      <span class="dim">lo que ejecuta</span>
+<span class="ok">references/</span>   <span class="dim">lo que consulta</span>
+<span class="ok">templates/</span>    <span class="dim">lo que reutiliza</span></pre>
+        </div>
+        <div class="reveal r-left" data-step="3" data-overlap-ok>
+          <div class="big" style="font-size:150px;color:var(--scd-lime)">~100</div>
+          <div style="font-size:30px;color:#fff;margin-top:10px">tokens por skill hasta que la tarea coincide</div>
+          <div class="chips" style="margin-top:30px"><span class="chip">Claude Code</span><span class="chip">Codex</span><span class="chip">Gemini CLI</span><span class="chip">Cursor</span></div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes"><p>Los MD dan contexto, las skills dan habilidades. Una skill es una carpeta con un SKILL.md que dice qué hace y cuándo, más scripts, referencias y plantillas. Es un estándar abierto que funciona en varios agentes. Se cargan por divulgación progresiva: el agente lee solo nombre y descripción, unos 100 tokens, y abre el resto cuando la tarea coincide. Analogía: las recetas de una cocina. El cocinero sabe cocinar; la receta le dice cómo lo hace tu restaurante.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">16</span></div>
+    </div>
+  </section>
+
+  <section data-label="17 Skills recomendadas" data-steps="2" data-current-step="0">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">03 · Skills</div>
+      <h2 class="title reveal r-rise" data-step="1">Las que más se recomiendan en 2026</h2>
+      <div class="stagger" style="display:grid;grid-template-columns:repeat(3,1fr);gap:30px"><div class="hud reveal r-rise" data-step="2" style="padding:32px 36px"><h3 style="font-size:40px;text-transform:none;font-family:var(--cs-font-mono);letter-spacing:0">Superpowers</h3><p>Planear y probar antes de codificar</p></div><div class="hud reveal r-rise" data-step="2" style="padding:32px 36px"><h3 style="font-size:40px;text-transform:none;font-family:var(--cs-font-mono);letter-spacing:0">systematic-debugging</h3><p>Depurar con método</p></div><div class="hud reveal r-rise" data-step="2" style="padding:32px 36px"><h3 style="font-size:40px;text-transform:none;font-family:var(--cs-font-mono);letter-spacing:0">frontend-design</h3><p>Diseño deliberado</p></div><div class="hud reveal r-rise" data-step="2" style="padding:32px 36px"><h3 style="font-size:40px;text-transform:none;font-family:var(--cs-font-mono);letter-spacing:0">pdf · docx · xlsx</h3><p>Documentos</p></div><div class="hud lime reveal r-rise" data-step="2" style="padding:32px 36px"><h3 style="font-size:40px;text-transform:none;font-family:var(--cs-font-mono);letter-spacing:0">skill-creator</h3><p>Tu puerta a constructor</p></div><div class="hud reveal r-rise" data-step="2" style="padding:32px 36px"><h3 style="font-size:40px;text-transform:none;font-family:var(--cs-font-mono);letter-spacing:0">Agent-Browser</h3><p>Verificación visual</p></div></div>
+    </div>
+    <aside class="notes"><p>Las más recomendadas en los rankings de 2026. Superpowers, de obra: brainstorming, planes, TDD, revisión de código. systematic-debugging, que cambia el comportamiento más frustrante de los agentes. frontend-design de Anthropic, para evitar el look genérico. Las skills de documentos. Y la que más importa para esta charla: skill-creator y mcp-builder, la puerta de entrada a pasar de usuario a constructor. No pongo número de estrellas: varían muchísimo entre fuentes. Dato meta: estas diapositivas se hicieron con una skill (slizdeck).</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">17</span></div>
+    </div>
+  </section>
+
+  <section data-label="18 Como elegir una skill" data-steps="3" data-current-step="0">
+    <img class="kori" src="assets/kori/determinado.png" alt="Kori, mascota del Student Community Day" style="right:150px;bottom:160px;width:330px">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">03 · Skills</div>
+      <h2 class="title reveal r-rise" data-step="1">Instala 2 o 3, <span class="lime">no 20</span></h2>
+      <div class="stagger" style="display:flex;flex-direction:column;gap:30px;margin-top:10px"><div class="reveal r-left" data-step="2" style="display:flex;gap:24px;align-items:center;font-size:32px;color:#fff"><span class="slant" style="width:46px;height:20px;flex:none"></span>Resuelve un fallo que ya viste repetirse</div><div class="reveal r-left" data-step="2" style="display:flex;gap:24px;align-items:center;font-size:32px;color:#fff"><span class="slant" style="width:46px;height:20px;flex:none"></span>Dice con precisión cuándo se activa</div><div class="reveal r-left" data-step="2" style="display:flex;gap:24px;align-items:center;font-size:32px;color:#fff"><span class="slant" style="width:46px;height:20px;flex:none"></span>Tiene criterio de terminado</div><div class="reveal r-left" data-step="2" style="display:flex;gap:24px;align-items:center;font-size:32px;color:#fff"><span class="slant" style="width:46px;height:20px;flex:none"></span>Léela antes: corre con tus permisos</div></div>
+      <div class="chip lime reveal r-scale" data-step="3" style="margin-top:50px;align-self:flex-start;font-size:26px">Demo · misma tarea, con skill y sin skill</div>
+    </div>
+    <aside class="notes"><p>Cómo elegir: que resuelva un fallo que ya viste repetirse, no uno hipotético; que tenga una descripción precisa de cuándo se activa; manejo de errores y criterio de terminado. Instala dos o tres: cada una compite por la atención del agente. Y léela antes de instalarla: es instrucción que tu agente ejecuta con tus permisos. Demo de 2 minutos: misma tarea en dos agentes, con y sin la skill. En mi proyecto: empaqueté mi forma de planear y revisar en una skill. Ahora lo hace como lo haría yo.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">18</span></div>
+    </div>
+  </section>
+
+  <section data-label="19 Loop engineering" data-steps="4" data-current-step="0">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">04 · Loop engineering</div>
+      <h2 class="title reveal r-rise" data-step="1">Diseña el ciclo, no el prompt</h2>
+      <div style="display:grid;grid-template-columns:820px 1fr;gap:60px">
+        <div style="position:relative;height:560px;margin-top:-20px">
+          <svg class="reveal r-fade" data-step="2" viewBox="0 0 820 560" style="position:absolute;inset:0;width:820px;height:560px" aria-hidden="true"><ellipse cx="400" cy="236" rx="270" ry="190" fill="none" stroke="#1FD3F5" stroke-opacity=".45" stroke-width="3" stroke-dasharray="10 12"/></svg>
+          <div class="reveal r-scale" data-step="2" style="position:absolute;left:250px;top:0px;width:300px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px"><div class="ring">01</div><div style="font-family:var(--cs-font-heading);font-size:38px;text-transform:uppercase;color:#fff">Meta</div><div style="font-size:23px;color:var(--cs-body)">Qué es terminado</div></div><div class="reveal r-scale" data-step="2" style="position:absolute;left:520px;top:190px;width:300px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px"><div class="ring">02</div><div style="font-family:var(--cs-font-heading);font-size:38px;text-transform:uppercase;color:#fff">Acción</div><div style="font-size:23px;color:var(--cs-body)">Usa herramientas</div></div><div class="reveal r-scale" data-step="2" style="position:absolute;left:250px;top:380px;width:300px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px"><div class="ring">03</div><div style="font-family:var(--cs-font-heading);font-size:38px;text-transform:uppercase;color:#fff">Observación</div><div style="font-size:23px;color:var(--cs-body)">Lee resultados</div></div><div class="reveal r-scale" data-step="2" style="position:absolute;left:-20px;top:190px;width:300px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px"><div class="ring">04</div><div style="font-family:var(--cs-font-heading);font-size:38px;text-transform:uppercase;color:#fff">Decisión</div><div style="font-size:23px;color:var(--cs-body)">Seguir o corregir</div></div>
+        </div>
+        <div style="align-self:center">
+          <div class="hud red reveal r-left" data-step="3"><div class="tag">05 · Parada</div><h3>Éxito o tope</h3><p>La verifica una máquina, no el modelo</p></div>
+          <div class="payoff reveal r-mask" data-step="4" style="margin-top:40px;color:var(--scd-cyan)">Como un termostato: fijas la meta, él mide y corrige</div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes"><p>Loop engineering: diseñar el sistema de retroalimentación que deja al agente planear, actuar, observar y corregirse hasta cumplir una meta, sin que dirijas cada turno. Cinco partes: meta verificable, acción, observación, decisión y parada, que siempre incluye un tope. Analogía del termostato: no le dices la temperatura cada minuto. Advertencia honesta: es una práctica emergente, aún no es un estándar. Un loop con contexto malo solo falla más rápido y más caro.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">19</span></div>
+    </div>
+  </section>
+
+  <section data-label="20 Tipos de loop" data-steps="2" data-current-step="0">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">04 · Loop engineering</div>
+      <h2 class="title reveal r-rise" data-step="1">Cuatro loops que ya puedes usar</h2>
+      <table class="sz-table" style="max-width:1620px">
+        <thead><tr><th>Loop</th><th>Idea</th><th>Ejemplo</th></tr></thead>
+        <tbody>
+          <tr class="hl reveal" data-step="2"><td class="lead"><span class="mono">/goal</span></td><td>Itera hasta cumplir una condición</td><td>Que pase la suite de tests</td></tr>
+          <tr class="reveal" data-step="2"><td class="lead"><span class="mono">/loop</span></td><td>Repite cada cierto tiempo</td><td>Vigilar el CI y arreglar lo trivial</td></tr>
+          <tr class="reveal" data-step="2"><td class="lead">Evaluador y optimizador</td><td>Uno genera, otro critica</td><td>Código y revisión en ciclo</td></tr>
+          <tr class="reveal" data-step="2"><td class="lead">Monitoreo</td><td>Corre a lo largo del tiempo</td><td>Revisión diaria de dependencias</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <aside class="notes"><p>Cuatro tipos que aparecen en las guías de 2026. El loop de meta, que itera hasta cumplir una condición verificable. El recurrente, que repite una tarea cada cierto tiempo. El de evaluador y optimizador: uno genera y otro critica. Fallo típico: los dos convergen en la misma respuesta equivocada, o el evaluador se vuelve más permisivo. Y el de monitoreo. Cuándo no usar un loop: si una sola llamada bien armada resuelve la tarea. Empieza simple.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">20</span></div>
+    </div>
+  </section>
+
+  <section data-label="21 Guardrails" data-steps="3" data-current-step="0">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">04 · Loop engineering</div>
+      <h2 class="title reveal r-rise" data-step="1">Un loop sin tope es una factura sin tope</h2>
+      <div style="display:grid;grid-template-columns:1.05fr .95fr;gap:70px">
+        <div class="term reveal r-blur" data-step="2">
+          <div class="bar"><i></i><i></i><i></i><span>agente · ejemplo</span></div>
+<pre><span class="p">/goal</span> tests de auth en verde · tope 3
+<span class="dim">vuelta 1</span>  <span class="ko">4 tests fallan</span>
+<span class="dim">vuelta 2</span>  <span class="ko">1 test falla</span>
+<span class="dim">vuelta 3</span>  <span class="ko">1 test falla</span>
+<span class="ok">Tope alcanzado: me detengo</span></pre>
+        </div>
+        <div class="stagger" style="display:flex;flex-direction:column;gap:26px;justify-content:center"><div class="reveal r-left" data-step="3" style="display:flex;gap:20px;align-items:center;font-size:29px;color:#fff"><span style="font-family:var(--cs-font-mono);color:var(--scd-lime)">01</span>Topes de vueltas y costo</div><div class="reveal r-left" data-step="3" style="display:flex;gap:20px;align-items:center;font-size:29px;color:#fff"><span style="font-family:var(--cs-font-mono);color:var(--scd-lime)">02</span>Salida verificable</div><div class="reveal r-left" data-step="3" style="display:flex;gap:20px;align-items:center;font-size:29px;color:#fff"><span style="font-family:var(--cs-font-mono);color:var(--scd-lime)">03</span>Permisos mínimos</div><div class="reveal r-left" data-step="3" style="display:flex;gap:20px;align-items:center;font-size:29px;color:#fff"><span style="font-family:var(--cs-font-mono);color:var(--scd-lime)">04</span>Humano en lo irreversible</div><div class="reveal r-left" data-step="3" style="display:flex;gap:20px;align-items:center;font-size:29px;color:#fff"><span style="font-family:var(--cs-font-mono);color:var(--scd-lime)">05</span>Trazas</div></div>
+      </div>
+    </div>
+    <aside class="notes"><p>Demo mínima de 3 minutos: un /goal con una meta verificable, por ejemplo que pasen los tests de un módulo, con tope de 3 iteraciones, y mostrar que se corta y por qué. La salida de la terminal es ilustrativa: ajustar a la sintaxis real del agente que use. Guardrails no negociables: topes, salida verificable por una máquina, sandbox y permisos mínimos porque todo lo que lee el agente es entrada no confiable, compuertas humanas antes de lo irreversible y trazas. En mi proyecto: trabajó mientras yo tomaba un café.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">21</span></div>
+    </div>
+  </section>
+
+  <section data-label="22 Transicion Orca" data-steps="1" data-current-step="1">
+    <img class="kori" src="assets/kori/sorprendido.png" alt="Kori, mascota del Student Community Day" style="left:170px;bottom:150px;width:340px">
+    <div class="pad center">
+      <div class="eyebrow">05 · Orquestación</div>
+      <h1 class="ts-title" style="font-size:160px">De un agente a una <span class="grad-word">flota</span></h1>
+      <div class="ts-tagline">Tú marcas el ritmo, cada agente toca su parte</div>
+    </div>
+    <aside class="notes"><p>Con un solo agente trabajas en secuencia y esperas mucho. Con una flota, coordinas: tú defines, los agentes ejecutan en paralelo y los humanos deciden en las compuertas. Es el nivel 4 de Shapiro. Analogía: dirigir una orquesta. Y sí, la herramienta se llama Orca, de orquesta (chiste suave). Ahora volvemos a los tres agentes del inicio.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">22</span></div>
+    </div>
+  </section>
+
+  <section data-label="23 Que es Orca" data-steps="3" data-current-step="0">
+    <div class="skew reveal r-blur" data-step="1" style="right:150px;top:200px;width:560px;height:400px"><img src="assets/img/robot.jpg" alt="Equipo trabajando en una mesa con documentos"></div>
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">05 · Orquestación</div>
+      <h2 class="title reveal r-rise" data-step="1">Orca: dirige tu flota</h2>
+      <div class="stagger" style="display:flex;flex-direction:column;gap:22px;max-width:1000px"><div class="reveal r-left" data-step="2" style="display:grid;grid-template-columns:200px 1fr;gap:20px;align-items:baseline"><div style="font-family:var(--cs-font-heading);font-size:40px;text-transform:uppercase;color:var(--scd-cyan)">Paralelo</div><div style="font-size:28px;color:#fff">Varios agentes, un worktree cada uno</div></div><div class="reveal r-left" data-step="2" style="display:grid;grid-template-columns:200px 1fr;gap:20px;align-items:baseline"><div style="font-family:var(--cs-font-heading);font-size:40px;text-transform:uppercase;color:var(--scd-cyan)">Revisión</div><div style="font-size:28px;color:#fff">Diffs anotados línea a línea</div></div><div class="reveal r-left" data-step="2" style="display:grid;grid-template-columns:200px 1fr;gap:20px;align-items:baseline"><div style="font-family:var(--cs-font-heading);font-size:40px;text-transform:uppercase;color:var(--scd-cyan)">Móvil</div><div style="font-size:28px;color:#fff">Avisa cuando un agente termina</div></div><div class="reveal r-left" data-step="2" style="display:grid;grid-template-columns:200px 1fr;gap:20px;align-items:baseline"><div style="font-family:var(--cs-font-heading);font-size:40px;text-transform:uppercase;color:var(--scd-cyan)">CLI</div><div style="font-size:28px;color:#fff">Un agente coordina a otros</div></div></div>
+      <div class="reveal r-rise" data-step="3" style="margin-top:44px;display:flex;gap:30px;align-items:center">
+        <div class="term" style="flex:none"><pre style="padding:16px 26px;font-size:26px"><span class="p">$</span> brew install --cask stablyai/orca/orca</pre></div>
+        <div class="chips"><span class="chip lime">Open source · MIT</span><span class="chip">Tus suscripciones</span></div>
+      </div>
+    </div>
+    <aside class="notes"><p>Orca es un ADE, Agent Development Environment, open source de Stably AI, licencia MIT, para macOS, Windows y Linux, con app móvil. Corre Claude Code, Codex, OpenCode, Gemini y cualquier agente de CLI, cada uno en su propio git worktree. No revende cómputo: usas tus propias suscripciones. También tiene SSH, navegador integrado y flujos con GitHub y Linear.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">23</span></div>
+    </div>
+  </section>
+
+  <section data-label="24 Apuesta del ganador" data-steps="2" data-current-step="0">
+    <img class="kori" src="assets/kori/interactuando.png" alt="Kori, mascota del Student Community Day" style="right:150px;top:96px;width:330px">
+    <div class="pad">
+      <div class="eyebrow">Demo en vivo</div>
+      <h2 class="title">¿Qué agente gana?</h2>
+      <div class="stagger" style="display:flex;gap:36px;margin-top:20px"><div class="hud reveal r-rise" data-step="1" style="flex:1"><div style="display:flex;justify-content:space-between;align-items:center"><div class="ring">A</div><div class="tag">worktree-a</div></div><h3 style="margin-top:22px">Claude Code</h3><div style="height:12px;background:rgba(31,211,245,.15);margin-top:16px"><div style="height:100%;width:72%;background:linear-gradient(90deg,var(--scd-cyan),var(--scd-lime))"></div></div></div><div class="hud reveal r-rise" data-step="1" style="flex:1"><div style="display:flex;justify-content:space-between;align-items:center"><div class="ring">B</div><div class="tag">worktree-b</div></div><h3 style="margin-top:22px">Codex</h3><div style="height:12px;background:rgba(31,211,245,.15);margin-top:16px"><div style="height:100%;width:88%;background:linear-gradient(90deg,var(--scd-cyan),var(--scd-lime))"></div></div></div><div class="hud reveal r-rise" data-step="1" style="flex:1"><div style="display:flex;justify-content:space-between;align-items:center"><div class="ring">C</div><div class="tag">worktree-c</div></div><h3 style="margin-top:22px">Gemini CLI</h3><div style="height:12px;background:rgba(31,211,245,.15);margin-top:16px"><div style="height:100%;width:54%;background:linear-gradient(90deg,var(--scd-cyan),var(--scd-lime))"></div></div></div></div>
+      <div class="payoff reveal r-mask" data-step="2" style="margin-top:56px">Votamos, comparamos diffs, merge del mejor</div>
+    </div>
+    <aside class="notes"><p>Volvemos a los tres agentes que lancé al inicio. Momento de juego: la sala vota cuál va a ganar, A, B o C. Abro Orca, comparamos los diffs lado a lado y hacemos merge del mejor. Las barras de la diapositiva son ilustrativas: los nombres de los agentes se ajustan a los que se usen en vivo. Si algo falla, plan B: video grabado ayer.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">24</span></div>
+    </div>
+  </section>
+
+  <section data-label="25 Orquestacion real" data-steps="3" data-current-step="0">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">05 · Orquestación</div>
+      <h2 class="title reveal r-rise" data-step="1">No es solo paralelizar</h2>
+      <div class="reveal r-fade" data-step="2" style="position:relative;height:340px;width:1620px">
+        <svg viewBox="0 0 1620 340" style="position:absolute;inset:0" aria-hidden="true" fill="none" stroke="#1FD3F5" stroke-width="3" stroke-opacity=".7">
+          <path d="M250 170 H330"/><path d="M580 170 C620 170 620 70 660 70"/><path d="M580 170 C620 170 620 270 660 270"/>
+          <path d="M910 70 C950 70 950 170 990 170"/><path d="M910 270 C950 270 950 170 990 170"/><path d="M1240 170 H1320" stroke="#D2F21E"/>
+        </svg>
+        <div class="hud node" style="position:absolute;left:0px;top:125px;width:250px;padding:22px 26px;text-align:center"><h3 style="font-size:36px;margin:0">Modelo</h3></div><div class="hud node" style="position:absolute;left:330px;top:125px;width:250px;padding:22px 26px;text-align:center"><h3 style="font-size:36px;margin:0">API</h3></div><div class="hud node" style="position:absolute;left:660px;top:25px;width:250px;padding:22px 26px;text-align:center"><h3 style="font-size:36px;margin:0">UI</h3></div><div class="hud node" style="position:absolute;left:660px;top:225px;width:250px;padding:22px 26px;text-align:center"><h3 style="font-size:36px;margin:0">Pruebas</h3></div><div class="hud node  red" style="position:absolute;left:990px;top:125px;width:250px;padding:22px 26px;text-align:center"><h3 style="font-size:36px;margin:0">Compuerta</h3></div><div class="hud node lime" style="position:absolute;left:1320px;top:125px;width:250px;padding:22px 26px;text-align:center"><h3 style="font-size:36px;margin:0">Merge</h3></div>
+      </div>
+      <div class="chips reveal r-rise" data-step="3" style="margin-top:40px"><span class="chip">task-create</span><span class="chip">dispatch</span><span class="chip">ask · reply</span><span class="chip lime">gate-create</span><span class="chip">run</span></div>
+    </div>
+    <aside class="notes"><p>Orquestación de verdad: Orca trae una skill de orquestación. Defines el trabajo como un DAG de tareas con dependencias y estados; despachas cada tarea a un trabajador en una terminal; los trabajadores preguntan al coordinador y esperan respuesta; y las compuertas de decisión bloquean una tarea hasta que un humano la resuelve. Esto es loop engineering aplicado. Demo: disparo una compuerta y la respondo desde el teléfono con la app móvil. Antes de la charla: correr orca orchestration --help y confirmar si la versión usa run o run-create.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">25</span></div>
+    </div>
+  </section>
+
+  <section data-label="26 Orquestar no reemplaza revisar" data-steps="1" data-current-step="1">
+    <img class="kori" src="assets/kori/cansado.png" alt="Kori, mascota del Student Community Day" style="right:150px;bottom:160px;width:340px">
+    <div class="pad" style="justify-content:center">
+      <div class="quote" style="max-width:1300px">
+        <blockquote>Paralelizar sin verificar solo multiplica la revisión</blockquote>
+        <cite>Más agentes, más importa el harness</cite>
+      </div>
+    </div>
+    <aside class="notes"><p>Punto de equilibrio: orquestar no reemplaza revisar. Cuantos más agentes en paralelo, más importa el harness y las compuertas humanas. Kori aquí representa a quien recibe cinco PRs de mil líneas un viernes. En mi proyecto: pasé de programar a dirigir, pero sigo decidiendo. Otras opciones de pasada: Claude Squad, Warp, Composio, Symphony.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">26</span></div>
+    </div>
+  </section>
+
+  <section data-label="27 Tu ruta" data-steps="2" data-current-step="0">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">06 · Tu ruta</div>
+      <h2 class="title reveal r-rise" data-step="1">Tres niveles hacia constructor</h2>
+      <div class="stagger" style="display:flex;gap:36px"><div class="hud reveal r-rise" data-step="2" style="flex:1;min-height:420px"><div class="ring">A</div><h3 style="margin-top:26px">Usuario avanzado</h3><div class="tag" style="margin:18px 0 10px">Entregable</div><p>AGENTS.md y un flujo plan, ejecutar, validar</p></div><div class="hud lime reveal r-rise" data-step="2" style="flex:1;min-height:420px"><div class="ring lime">B</div><h3 style="margin-top:26px">Constructor de harness</h3><div class="tag" style="margin:18px 0 10px">Entregable</div><p>2 o 3 skills propias y un repo legible</p></div><div class="hud red reveal r-rise" data-step="2" style="flex:1;min-height:420px"><div class="ring red">C</div><h3 style="margin-top:26px">Constructor de agentes</h3><div class="tag" style="margin:18px 0 10px">Entregable</div><p>Un agente en producción con evaluaciones</p></div></div>
+    </div>
+    <aside class="notes"><p>Ya tienes casi todo: los agentes son software y fallan como software. Lo nuevo es aceptar que la salida es probabilística y aprender a medirla. Nivel A: usuario avanzado. Nivel B: constructor de harness, diseñas el entorno donde trabajan los agentes de tu equipo. Nivel C: constructor de agentes como producto, con bucle, herramientas, memoria, evaluaciones y guardrails. Frameworks para elegir uno y construir: LangGraph, Claude Agent SDK, OpenAI Agents SDK.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">27</span></div>
+    </div>
+  </section>
+
+  <section data-label="28 Plan de 90 dias" data-steps="2" data-current-step="0">
+    <img class="kori" src="assets/kori/entusiasta.png" alt="Kori, mascota del Student Community Day" style="right:150px;top:100px;width:280px">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">06 · Tu ruta</div>
+      <h2 class="title reveal r-rise" data-step="1">Tu plan de 90 días</h2>
+      <ol class="sz-timeline stagger" style="margin-top:80px">
+        <li class="reveal" data-step="2"><span class="when">Días 1 a 30</span><h3>Sube un nivel</h3><p>AGENTS.md y preguntas repetidas</p></li>
+        <li class="reveal" data-step="2"><span class="when">Días 31 a 60</span><h3>Tu harness</h3><p>Skills, sensores, un /goal</p></li>
+        <li class="reveal hl" data-step="2"><span class="when">Días 61 a 90</span><h3>Tu agente</h3><p>Pequeño, evaluado y publicado</p></li>
+      </ol>
+    </div>
+    <aside class="notes"><p>Plan de 90 días. Primer mes: sube un nivel como usuario. Segundo mes: construye tu harness. Tercer mes: construye un agente pequeño y completo con un framework, con evaluaciones y trazas, y publícalo como repositorio, servidor MCP o artículo. Para estudiantes: lo que pusiste en producción vale más que las credenciales.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">28</span></div>
+    </div>
+  </section>
+
+  <section data-label="29 Plan del lunes" data-steps="2" data-current-step="0">
+    <img class="kori" src="assets/kori/determinado.png" alt="Kori, mascota del Student Community Day" style="right:150px;bottom:160px;width:340px">
+    <div class="pad">
+      <div class="eyebrow reveal" data-step="1">Lo prometido</div>
+      <h2 class="title reveal r-rise" data-step="1">Elige una para el lunes</h2>
+      <div class="stagger" style="display:flex;flex-direction:column;gap:40px;margin-top:10px"><div class="reveal r-left" data-step="2" style="display:flex;gap:34px;align-items:center"><div class="ring" style="width:110px;height:110px;font-size:38px">01</div><div style="font-family:var(--cs-font-heading);font-size:60px;text-transform:uppercase;color:#fff">Crea AGENTS.md en tu repo</div></div><div class="reveal r-left" data-step="2" style="display:flex;gap:34px;align-items:center"><div class="ring" style="width:110px;height:110px;font-size:38px">02</div><div style="font-family:var(--cs-font-heading);font-size:60px;text-transform:uppercase;color:#fff">Anota cada pregunta repetida</div></div><div class="reveal r-left" data-step="2" style="display:flex;gap:34px;align-items:center"><div class="ring lime" style="width:110px;height:110px;font-size:38px">03</div><div style="font-family:var(--cs-font-heading);font-size:60px;text-transform:uppercase;color:#fff">Prueba un /goal con tope</div></div></div>
+    </div>
+    <aside class="notes"><p>Lo prometido al inicio. Cada persona elige una de estas tres acciones y la dice en voz alta a quien tiene al lado, o la anota. Comprometerse en público sube la probabilidad de hacerlo.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">29</span></div>
+    </div>
+  </section>
+
+  <section class="grad" data-label="30 Cierre" data-steps="1" data-current-step="1">
+    <img class="kori" src="assets/kori/corazon.png" alt="Kori, mascota del Student Community Day" style="left:170px;bottom:150px;width:360px">
+    <div class="pad" style="justify-content:center;padding-left:640px">
+      <div class="eyebrow">Gracias · Cochabamba</div>
+      <h1 class="cover-md">Pasas de escribir código a diseñar el <span class="grad-word">sistema que lo escribe</span></h1>
+      <div style="font-size:30px;line-height:1.6;color:var(--cs-body);margin-top:44px">Ubica tu nivel y sube uno<br>Escribe el entorno antes que el código<br>Diseña loops, orquesta, decide tú</div>
+      <div class="mono" style="font-size:34px;color:var(--scd-cyan);margin-top:36px">IG @tokidev.ai · GitHub @tokidev-ai</div>
+    </div>
+    <aside class="notes"><p>Tres ideas para llevarse: ubica tu nivel y sube uno; escribe el entorno antes que el código; deja de dirigir cada turno, diseña loops y orquesta, con un humano en las compuertas. Me encuentran en Instagram @tokidev.ai y en GitHub @tokidev-ai. Gracias, y a preguntas.</p></aside>
+    <div class="footer">
+      <div class="left">Student Community Day · Cochabamba</div>
+      <div>Rodrigo Torrico · <span class="num">30</span></div>
+    </div>
+  </section>
+
+</deck-stage>
+
+<!-- Viewer chrome: progress bar (top) + fullscreen button (top-right) -->
+<div id="progress-bar"></div>
+<button id="fs-btn" type="button" aria-label="Toggle fullscreen" title="Fullscreen">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M3 9V5a2 2 0 0 1 2-2h4M21 9V5a2 2 0 0 0-2-2h-4M21 15v4a2 2 0 0 1-2 2h-4M3 15v4a2 2 0 0 0 2 2h4"/>
+  </svg>
+</button>
+
+<!-- ============================================================
+     <deck-stage> custom element — fixed-aspect canvas with
+     keyboard nav, tap zones, slide overlay, print pagination.
+     Inlined IIFE — no external dependencies.
+     ============================================================ -->
+<script>
+  (() => {
+    const DESIGN_W_DEFAULT = 1920;
+    const DESIGN_H_DEFAULT = 1080;
+    const OVERLAY_HIDE_MS = 1800;
+
+    const stylesheet = `
+      :host {
+        position: fixed; inset: 0; display: block; background: #000; color: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+        overflow: hidden;
+      }
+      .stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+      .canvas { position: relative; transform-origin: center center; flex-shrink: 0; background: var(--cs-cream); will-change: transform; }
+      ::slotted(*) {
+        position: absolute !important; inset: 0 !important;
+        width: 100% !important; height: 100% !important;
+        box-sizing: border-box !important; overflow: hidden;
+        opacity: 0; pointer-events: none; visibility: hidden;
+      }
+      ::slotted([data-deck-active]) { opacity: 1; pointer-events: auto; visibility: visible; }
+      .tapzones { position: fixed; inset: 0; display: flex; z-index: 2147482000; pointer-events: none; }
+      .tapzone { flex: 1; pointer-events: auto; -webkit-tap-highlight-color: transparent; }
+      @media (hover: hover) and (pointer: fine) { .tapzones { display: none; } }
+      .overlay {
+        position: fixed; left: 50%; bottom: 22px;
+        transform: translate(-50%, 6px) scale(0.92); filter: blur(6px);
+        display: flex; align-items: center; gap: 4px; padding: 4px;
+        background: #000; color: #fff; border-radius: 999px;
+        font-size: 12px; font-feature-settings: "tnum" 1; letter-spacing: 0.01em;
+        opacity: 0; pointer-events: none;
+        transition: opacity 260ms ease, transform 260ms cubic-bezier(.2,.8,.2,1), filter 260ms ease;
+        transform-origin: center bottom; z-index: 2147483000; user-select: none;
+      }
+      .overlay[data-visible] { opacity: 1; pointer-events: auto; transform: translate(-50%, 0) scale(1); filter: blur(0); }
+      .btn {
+        appearance: none; background: transparent; border: 0; margin: 0; padding: 0;
+        color: rgba(255,255,255,0.72); font: inherit; cursor: default;
+        display: inline-flex; align-items: center; justify-content: center;
+        height: 28px; min-width: 28px; border-radius: 999px;
+        transition: background 140ms ease, color 140ms ease;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+      .btn:active { background: rgba(255,255,255,0.18); }
+      .btn:focus { outline: none; }
+      .btn:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(255,255,255,0.9); }
+      .btn svg { width: 14px; height: 14px; display: block; }
+      .btn.reset { font-size: 11px; font-weight: 500; padding: 0 10px 0 12px; gap: 6px; }
+      .btn.reset .kbd {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 16px; height: 16px; padding: 0 4px;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 10px; line-height: 1; color: rgba(255,255,255,0.88);
+        background: rgba(255,255,255,0.12); border-radius: 4px;
+      }
+      .count {
+        font-variant-numeric: tabular-nums; color: #fff; font-weight: 500;
+        padding: 0 8px; min-width: 42px; text-align: center; font-size: 12px;
+      }
+      .count .sep { color: rgba(255,255,255,0.45); margin: 0 3px; font-weight: 400; }
+      .count .total { color: rgba(255,255,255,0.55); }
+      .divider { width: 1px; height: 14px; background: rgba(255,255,255,0.18); margin: 0 2px; }
+      @media print {
+        :host { position: static; inset: auto; background: none; overflow: visible; color: inherit; }
+        .stage { position: static; display: block; }
+        .canvas { transform: none !important; width: auto !important; height: auto !important; background: none; will-change: auto; }
+        ::slotted(*) {
+          position: relative !important; inset: auto !important;
+          width: var(--deck-design-w) !important; height: var(--deck-design-h) !important;
+          box-sizing: border-box !important;
+          opacity: 1 !important; visibility: visible !important; pointer-events: auto;
+          break-after: page; page-break-after: always; break-inside: avoid; overflow: hidden;
+        }
+        ::slotted(*:last-child) { break-after: auto; page-break-after: auto; }
+        .overlay, .tapzones { display: none !important; }
+      }
+    `;
+
+    class DeckStage extends HTMLElement {
+      static get observedAttributes() { return ['width', 'height', 'noscale']; }
+
+      constructor() {
+        super();
+        this._root = this.attachShadow({ mode: 'open' });
+        this._index = 0;
+        this._slides = [];
+        this._notes = [];
+        this._hideTimer = null;
+        this._onKey = this._onKey.bind(this);
+        this._onResize = this._onResize.bind(this);
+        this._onSlotChange = this._onSlotChange.bind(this);
+        this._onMouseMove = this._onMouseMove.bind(this);
+        this._onTapBack = this._onTapBack.bind(this);
+        this._onTapForward = this._onTapForward.bind(this);
+      }
+
+      get designWidth() { return parseInt(this.getAttribute('width'), 10) || DESIGN_W_DEFAULT; }
+      get designHeight() { return parseInt(this.getAttribute('height'), 10) || DESIGN_H_DEFAULT; }
+
+      connectedCallback() {
+        this._render();
+        this._loadNotes();
+        this._syncPrintPageRule();
+        window.addEventListener('keydown', this._onKey);
+        window.addEventListener('resize', this._onResize);
+        window.addEventListener('mousemove', this._onMouseMove, { passive: true });
+      }
+      disconnectedCallback() {
+        window.removeEventListener('keydown', this._onKey);
+        window.removeEventListener('resize', this._onResize);
+        window.removeEventListener('mousemove', this._onMouseMove);
+        if (this._hideTimer) clearTimeout(this._hideTimer);
+      }
+      attributeChangedCallback() {
+        if (this._canvas) {
+          this._canvas.style.width = this.designWidth + 'px';
+          this._canvas.style.height = this.designHeight + 'px';
+          this._canvas.style.setProperty('--deck-design-w', this.designWidth + 'px');
+          this._canvas.style.setProperty('--deck-design-h', this.designHeight + 'px');
+          this._fit();
+          this._syncPrintPageRule();
+        }
+      }
+
+      _render() {
+        const style = document.createElement('style');
+        style.textContent = stylesheet;
+        const stage = document.createElement('div');
+        stage.className = 'stage';
+        const canvas = document.createElement('div');
+        canvas.className = 'canvas';
+        canvas.style.width = this.designWidth + 'px';
+        canvas.style.height = this.designHeight + 'px';
+        canvas.style.setProperty('--deck-design-w', this.designWidth + 'px');
+        canvas.style.setProperty('--deck-design-h', this.designHeight + 'px');
+        const slot = document.createElement('slot');
+        slot.addEventListener('slotchange', this._onSlotChange);
+        canvas.appendChild(slot);
+        stage.appendChild(canvas);
+        const tapzones = document.createElement('div');
+        tapzones.className = 'tapzones';
+        tapzones.setAttribute('aria-hidden', 'true');
+        const tzBack = document.createElement('div'); tzBack.className = 'tapzone tapzone--back';
+        const tzMid = document.createElement('div'); tzMid.className = 'tapzone tapzone--mid'; tzMid.style.pointerEvents = 'none';
+        const tzFwd = document.createElement('div'); tzFwd.className = 'tapzone tapzone--fwd';
+        tzBack.addEventListener('click', this._onTapBack);
+        tzFwd.addEventListener('click', this._onTapForward);
+        tapzones.append(tzBack, tzMid, tzFwd);
+        const overlay = document.createElement('div');
+        overlay.className = 'overlay';
+        overlay.setAttribute('role', 'toolbar');
+        overlay.setAttribute('aria-label', 'Deck controls');
+        overlay.innerHTML =
+          '<button class="btn prev" type="button" aria-label="Previous slide" title="Previous (←)">' +
+            '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3L5 8l5 5"/></svg>' +
+          '</button>' +
+          '<span class="count" aria-live="polite"><span class="current">1</span><span class="sep">/</span><span class="total">1</span></span>' +
+          '<button class="btn next" type="button" aria-label="Next slide" title="Next (→)">' +
+            '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>' +
+          '</button>' +
+          '<span class="divider"></span>' +
+          '<button class="btn reset" type="button" aria-label="Reset to first slide" title="Reset (R)">Reset<span class="kbd">R</span></button>';
+        overlay.querySelector('.prev').addEventListener('click', () => this._go(this._index - 1, 'click'));
+        overlay.querySelector('.next').addEventListener('click', () => this._go(this._index + 1, 'click'));
+        overlay.querySelector('.reset').addEventListener('click', () => this._go(0, 'click'));
+        this._root.append(style, stage, tapzones, overlay);
+        this._canvas = canvas;
+        this._slot = slot;
+        this._overlay = overlay;
+        this._countEl = overlay.querySelector('.current');
+        this._totalEl = overlay.querySelector('.total');
+      }
+
+      _syncPrintPageRule() {
+        const id = 'deck-stage-print-page';
+        let tag = document.getElementById(id);
+        if (!tag) { tag = document.createElement('style'); tag.id = id; document.head.appendChild(tag); }
+        tag.textContent =
+          '@page { size: ' + this.designWidth + 'px ' + this.designHeight + 'px; margin: 0; } ' +
+          '@media print { html, body { margin: 0 !important; padding: 0 !important; background: none !important; overflow: visible !important; height: auto !important; } * { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }';
+      }
+
+      _onSlotChange() {
+        this._collectSlides();
+        this._restoreIndex();
+        this._applyIndex({ showOverlay: false, broadcast: true, reason: 'init' });
+        this._fit();
+      }
+
+      _collectSlides() {
+        const assigned = this._slot.assignedElements({ flatten: true });
+        this._slides = assigned.filter((el) => {
+          const tag = el.tagName;
+          return tag !== 'TEMPLATE' && tag !== 'SCRIPT' && tag !== 'STYLE';
+        });
+        this._slides.forEach((slide, i) => {
+          slide.setAttribute('data-deck-slide', String(i));
+        });
+        if (this._totalEl) this._totalEl.textContent = String(this._slides.length || 1);
+        if (this._index >= this._slides.length) this._index = Math.max(0, this._slides.length - 1);
+      }
+
+      _loadNotes() {
+        const tag = document.getElementById('speaker-notes');
+        if (!tag) { this._notes = []; return; }
+        try {
+          const parsed = JSON.parse(tag.textContent || '[]');
+          if (Array.isArray(parsed)) this._notes = parsed;
+        } catch (e) { this._notes = []; }
+      }
+
+      _restoreIndex() {
+        const h = (location.hash || '').match(/^#(\d+)$/);
+        if (h) {
+          const n = parseInt(h[1], 10) - 1;
+          if (n >= 0 && n < this._slides.length) this._index = n;
+        }
+      }
+
+      _applyIndex({ showOverlay = true, broadcast = true, reason = 'init' } = {}) {
+        if (!this._slides.length) return;
+        const prev = this._prevIndex == null ? -1 : this._prevIndex;
+        const curr = this._index;
+        try { history.replaceState(null, '', '#' + (curr + 1)); } catch (e) {}
+        const swap = () => this._slides.forEach((s, i) => {
+          if (i === curr) s.setAttribute('data-deck-active', '');
+          else s.removeAttribute('data-deck-active');
+        });
+        // transition="fade" en <deck-stage>: fundido con View Transitions.
+        // Sin soporte, con movimiento reducido o en la entrada inicial, corte
+        // directo como siempre.
+        const fade = this.getAttribute('transition') === 'fade' && reason !== 'init' && prev >= 0 &&
+          typeof document.startViewTransition === 'function' &&
+          !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        if (fade) document.startViewTransition(swap); else swap();
+        if (this._countEl) this._countEl.textContent = String(curr + 1);
+        if (broadcast) {
+          this.dispatchEvent(new CustomEvent('slidechange', {
+            detail: {
+              index: curr, previousIndex: prev,
+              total: this._slides.length,
+              slide: this._slides[curr] || null,
+              previousSlide: prev >= 0 ? (this._slides[prev] || null) : null,
+              reason: reason,
+            },
+            bubbles: true, composed: true,
+          }));
+        }
+        this._prevIndex = curr;
+        if (showOverlay) this._flashOverlay();
+      }
+
+      _flashOverlay() {
+        if (!this._overlay) return;
+        this._overlay.setAttribute('data-visible', '');
+        if (this._hideTimer) clearTimeout(this._hideTimer);
+        this._hideTimer = setTimeout(() => { this._overlay.removeAttribute('data-visible'); }, OVERLAY_HIDE_MS);
+      }
+
+      _fit() {
+        if (!this._canvas) return;
+        if (this.hasAttribute('noscale')) { this._canvas.style.transform = 'none'; return; }
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const s = Math.min(vw / this.designWidth, vh / this.designHeight);
+        this._canvas.style.transform = `scale(${s})`;
+      }
+
+      _onResize() { this._fit(); }
+      _onMouseMove() { this._flashOverlay(); }
+      _onTapBack(e) { e.preventDefault(); this._go(this._index - 1, 'tap'); }
+      _onTapForward(e) { e.preventDefault(); this._go(this._index + 1, 'tap'); }
+
+      _onKey(e) {
+        const t = e.target;
+        if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        const key = e.key;
+        let handled = true;
+        if (key === 'ArrowRight' || key === 'PageDown' || key === ' ' || key === 'Spacebar') this._go(this._index + 1, 'keyboard');
+        else if (key === 'ArrowLeft' || key === 'PageUp') this._go(this._index - 1, 'keyboard');
+        else if (key === 'Home') this._go(0, 'keyboard');
+        else if (key === 'End') this._go(this._slides.length - 1, 'keyboard');
+        else if (key === 'r' || key === 'R') this._go(0, 'keyboard');
+        else if (/^[0-9]$/.test(key)) {
+          const n = key === '0' ? 9 : parseInt(key, 10) - 1;
+          if (n < this._slides.length) this._go(n, 'keyboard');
+        } else handled = false;
+        if (handled) { e.preventDefault(); }
+      }
+
+      _go(i, reason = 'api') {
+        if (!this._slides.length) return;
+        const clamped = Math.max(0, Math.min(this._slides.length - 1, i));
+        if (clamped === this._index) { return; }
+        this._index = clamped;
+        this._applyIndex({ showOverlay: false, broadcast: true, reason });
+      }
+
+      get index() { return this._index; }
+      get length() { return this._slides.length; }
+      goTo(i) { this._go(i, 'api'); }
+      next() { this._go(this._index + 1, 'api'); }
+      prev() { this._go(this._index - 1, 'api'); }
+      reset() { this._go(0, 'api'); }
+    }
+
+    if (!customElements.get('deck-stage')) customElements.define('deck-stage', DeckStage);
+  })();
+</script>
+
+<!-- ============================================================
+     Runtime: pasos, contadores, graficas, presentador y controles
+     ============================================================ -->
+<script>
+
+  const stage = document.querySelector('deck-stage');
+
+  /* Mirror data-deck-active → data-active="true" on the section so CSS
+     animations and `.is-on` reveals can scope on it. */
+  function syncActive() {
+    const slides = stage.querySelectorAll(':scope > section');
+    slides.forEach((s) => {
+      if (s.hasAttribute('data-deck-active')) s.setAttribute('data-active', 'true');
+      else s.removeAttribute('data-active');
+    });
+  }
+
+  /* Formato compartido del contador: lo usan la animacion y el estado final
+     de impresion, para que el PDF muestre exactamente la misma cifra. */
+  const LANG = document.documentElement.lang || 'en';
+  /* useGrouping 'min2': separador de miles solo desde 5 cifras, para que un
+     año (2026) no salga como "2,026". Navegadores sin soporte caen a true. */
+  function numberFormat(opts) {
+    try { return new Intl.NumberFormat(LANG, Object.assign({ useGrouping: 'min2' }, opts)); }
+    catch (e) { return new Intl.NumberFormat(LANG, opts); }
+  }
+  /* data-counter="4.5" respeta los decimales que trae (o data-decimals="N");
+     data-format="compact" abrevia (2.4 k, 1.2 M) segun el idioma del deck. */
+  function counterParts(el) {
+    const raw = String(el.dataset.counter || '0').trim();
+    const target = parseFloat(raw.replace(',', '.')) || 0;
+    const decimals = el.dataset.decimals != null
+      ? parseInt(el.dataset.decimals, 10)
+      : (raw.split(/[.,]/)[1] || '').length;
+    const unitNode = el.querySelector('.unit');
+    const unitHTML = unitNode ? unitNode.outerHTML : '';
+    const nf = el.dataset.format === 'compact'
+      ? numberFormat({ notation: 'compact', maximumFractionDigits: 1 })
+      : numberFormat({ minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    const formatVal = (v) => nf.format(v);
+    return { target, unitHTML, formatVal };
+  }
+
+  /* Counter animation — runs when [data-counter] reaches data-target-step.
+     Used by the counter+bars pattern (animations.md). */
+  function runCounter(el) {
+    if (el.dataset.played === '1') return;
+    el.dataset.played = '1';
+    const { target, unitHTML, formatVal } = counterParts(el);
+    const duration = 1400;
+    el.innerHTML = formatVal(0) + unitHTML;
+    const start = performance.now();
+    // Cada corrida lleva su id: si finalizeForPrint (PDF, export, capturas)
+    // deja la cifra final mientras la animacion sigue viva, el siguiente
+    // frame ya no la pisa con un valor intermedio.
+    const run = (el._counterRun = (el._counterRun || 0) + 1);
+    const tick = (now) => {
+      if (el._counterRun !== run) return;
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 5);
+      el.innerHTML = formatVal(target * eased) + unitHTML;
+      if (t < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  function resetCounters(slide) {
+    slide.querySelectorAll('[data-counter]').forEach((el) => {
+      el.dataset.played = '';
+      el._counterRun = (el._counterRun || 0) + 1;
+      const { unitHTML, formatVal } = counterParts(el);
+      el.innerHTML = formatVal(0) + unitHTML;
+    });
+  }
+
+  /* ── Graficas declarativas (.sz-chart) ────────────────────────────────
+     Un <figure class="sz-chart"> con un bloque script type="application/json"
+     adentro, con los datos:
+         {"type":"bar","labels":["2023","2024","2025"],
+          "series":[{"name":"ARR","values":[0.4,1.2,3.1]}],
+          "unit":" M","prefix":"$","highlight":"last"}
+     (un cierre de etiqueta script literal en este comentario cortaria el
+     bloque: por eso el ejemplo completo vive en media-and-data.md).
+     type: bar | hbar | line | area. scale:"log" para ordenes de magnitud.
+     highlight: indice, "last", "max" o "min" (va en el color de acento).
+     Ver reference/media-and-data.md → "Datos".                          */
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const SUP = { '-': '⁻', 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' };
+  function svgEl(tag, attrs, parent) {
+    const e = document.createElementNS(SVGNS, tag);
+    for (const k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function svgText(parent, x, y, cls, text, anchor) {
+    const t = svgEl('text', { x, y, class: cls, 'text-anchor': anchor || 'start', 'dominant-baseline': 'middle' }, parent);
+    t.textContent = text;
+    return t;
+  }
+  function niceStep(range, count) {
+    const raw = (range || 1) / Math.max(1, count);
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const f = raw / mag;
+    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * mag;
+  }
+  function chartSpec(fig) {
+    const tag = fig.querySelector('script[type="application/json"]');
+    try { return JSON.parse(tag ? tag.textContent : (fig.dataset.chart || '{}')); }
+    catch (e) { console.warn('sz-chart: JSON invalido', fig, e); return null; }
+  }
+  function renderChart(fig) {
+    const spec = chartSpec(fig);
+    if (!spec || !Array.isArray(spec.series) || !spec.series.length) return;
+    fig.querySelectorAll(':scope > svg').forEach((s) => s.remove());
+    const type = spec.type || 'bar';
+    const series = spec.series.map((s) => ({ name: s.name || '', values: (s.values || []).map(Number) }));
+    const n = Math.max(...series.map((s) => s.values.length));
+    const labels = (spec.labels || Array.from({ length: n }, (_, i) => String(i + 1))).map(String);
+    const W = fig.clientWidth || 1400, H = fig.clientHeight || 520;
+    const all = series.flatMap((s) => s.values).filter((v) => isFinite(v));
+    const decOf = (v) => Math.min(3, (String(v).split('.')[1] || '').length);
+    const log = spec.scale === 'log';
+    /* Cada cifra con la precision con la que viene en el JSON (3.4 → "3,4",
+       50 → "50"); spec.decimals la fija para todas. En escala log, notacion
+       cientifica: 5 × 10²⁵ en vez de 25 digitos. */
+    const fmtNum = (v, d) => {
+      if (log && Math.abs(v) >= 1e5) {
+        const e = Math.floor(Math.log10(Math.abs(v)));
+        const m = v / Math.pow(10, e);
+        const ms = Math.abs(m - 1) < 1e-9 ? '' : numberFormat({ maximumFractionDigits: 1 }).format(m) + ' × ';
+        return ms + '10' + String(e).split('').map((c) => SUP[c] || c).join('');
+      }
+      const dd = spec.decimals != null ? spec.decimals : d;
+      return numberFormat({ minimumFractionDigits: dd, maximumFractionDigits: dd }).format(v);
+    };
+    const fmt = (v, d = decOf(v)) => (spec.prefix || '') + fmtNum(v, d) + (spec.unit || '');
+    const hlIndex = (vals) => spec.highlight === 'last' ? vals.length - 1
+      : spec.highlight === 'max' ? vals.indexOf(Math.max(...vals))
+      : spec.highlight === 'min' ? vals.indexOf(Math.min(...vals))
+      : typeof spec.highlight === 'number' ? spec.highlight : -1;
+
+    /* Escala de valores */
+    let lo, hi, tickDec = 0; const ticks = [];
+    if (log) {
+      const pos = all.filter((v) => v > 0);
+      lo = Math.floor(Math.log10(spec.min || Math.min(...pos)));
+      hi = Math.ceil(Math.log10(spec.max || Math.max(...pos)));
+      if (hi === lo) hi = lo + 1;
+      const step = Math.max(1, Math.ceil((hi - lo) / 5));
+      hi = lo + step * Math.ceil((hi - lo) / step);   // que el tope caiga en una linea de la grilla
+      for (let e = lo; e <= hi; e += step) ticks.push(e);
+    } else {
+      const dMin = Math.min(0, ...all), dMax = Math.max(0, ...all);
+      const step = niceStep((spec.max ?? dMax) - (spec.min ?? dMin), 4);
+      lo = spec.min ?? Math.floor(dMin / step) * step;
+      hi = spec.max ?? Math.ceil(dMax / step) * step;
+      if (hi === lo) hi = lo + step;
+      tickDec = decOf(Number(step.toPrecision(6)));
+      for (let v = lo; v <= hi + step / 1e6; v += step) ticks.push(Number(v.toPrecision(12)));
+    }
+    const tv = (v) => (log ? Math.log10(Math.max(v, 1e-300)) : v);
+    const tickLabel = (t) => log ? '10' + String(t).split('').map((c) => SUP[c] || c).join('') : fmt(t, tickDec);
+
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': spec.title || labels.join(', ') });
+    fig.appendChild(svg);
+    const multi = series.length > 1;
+
+    if (type === 'hbar') {
+      /* Barras horizontales: rankings, "donde gana cada uno". */
+      const left = Math.min(W * 0.4, Math.max(...labels.map((l) => l.length)) * 14 + 28);
+      const right = Math.max(...all.map((v) => fmt(v).length)) * 16 + 24;
+      const x0 = left, x1 = W - right, band = H / n, bh = Math.min(64, band * 0.56);
+      const xs = (v) => x0 + ((tv(v) - (log ? lo : Math.min(lo, 0))) / (hi - (log ? lo : Math.min(lo, 0)))) * (x1 - x0);
+      svgEl('line', { x1: x0, x2: x0, y1: 0, y2: H, class: 'sz-axis' }, svg);
+      const vals = series[0].values, hl = hlIndex(vals);
+      vals.forEach((v, i) => {
+        const cy = band * i + band / 2;
+        const x = xs(v);
+        svgEl('rect', { x: x0, y: cy - bh / 2, width: Math.max(0, x - x0), height: bh, rx: 4,
+          class: `sz-bar sz-h ${i === hl ? 'sz-hl' : 'sz-s0'}`, style: `--i:${i}` }, svg);
+        svgText(svg, x0 - 18, cy, 'sz-cat', labels[i] || '', 'end');
+        svgText(svg, x + 14, cy, `sz-value ${i === hl ? 'sz-hl' : ''}`, fmt(v));
+      });
+      return svg;
+    }
+
+    const isLine = type === 'line' || type === 'area';
+    const legend = multi && !isLine;
+    const top = 48 + (legend ? 44 : 0);
+    const left = Math.max(...ticks.map((t) => tickLabel(t).length)) * 13.5 + 28;
+    const right = isLine ? (multi ? Math.max(...series.map((s, si) => s.name.length + (si === 0 ? 14 : 0))) * 13 + 40 : 32) : 12;
+    const bottom = 60;
+    const x0 = left, x1 = W - right, y0 = top, y1 = H - bottom;
+    const ys = (v) => y1 - ((tv(v) - lo) / (hi - lo)) * (y1 - y0);
+    const every = Math.max(1, Math.ceil(n / 12));
+
+    ticks.forEach((t) => {
+      const y = y1 - ((t - lo) / (hi - lo)) * (y1 - y0);
+      svgEl('line', { x1: x0, x2: x1, y1: y, y2: y, class: t === (log ? lo : 0) || (t === lo) ? 'sz-axis' : 'sz-grid' }, svg);
+      svgText(svg, x0 - 16, y, log ? 'sz-tick sz-exp' : 'sz-tick', tickLabel(t), 'end');
+    });
+
+    if (legend) {
+      let lx = x0;
+      series.forEach((s, si) => {
+        const g = svgEl('g', { class: `sz-s${si}` }, svg);
+        svgEl('rect', { x: lx, y: 8, width: 20, height: 20, rx: 4, class: 'sz-bar', style: 'transform:none' }, g);
+        const t = svgText(g, lx + 30, 18, 'sz-name', s.name);
+        t.style.opacity = 1;
+        lx += 30 + s.name.length * 13 + 40;
+      });
+    }
+
+    if (!isLine) {
+      const band = (x1 - x0) / n, groupW = band * (multi ? 0.72 : 0.62), bw = groupW / series.length;
+      const base = ys(log ? Math.pow(10, lo) : Math.max(lo, 0));
+      series.forEach((s, si) => {
+        const hl = multi ? -1 : hlIndex(s.values);
+        s.values.forEach((v, i) => {
+          const x = x0 + band * i + (band - groupW) / 2 + bw * si;
+          const y = ys(v);
+          svgEl('rect', { x: x + 2, y: Math.min(y, base), width: Math.max(0, bw - 4), height: Math.abs(base - y), rx: 4,
+            class: `sz-bar ${i === hl ? 'sz-hl' : 'sz-s' + si}`, style: `--i:${i}` }, svg);
+          if (!multi && (n <= 10 || i === hl)) svgText(svg, x + bw / 2, y - 22, `sz-value ${i === hl ? 'sz-hl' : ''}`, fmt(v), 'middle');
+        });
+      });
+      labels.forEach((l, i) => { if (i % every === 0) svgText(svg, x0 + band * i + band / 2, y1 + 34, 'sz-cat', l, 'middle'); });
+      return svg;
+    }
+
+    const px = (i) => (n === 1 ? (x0 + x1) / 2 : x0 + (i * (x1 - x0)) / (n - 1));
+    series.forEach((s, si) => {
+      const g = svgEl('g', { class: `sz-s${si}` }, svg);
+      const pts = s.values.map((v, i) => [px(i), ys(v)]).filter((p) => isFinite(p[1]));
+      if (!pts.length) return;
+      if (type === 'area') {
+        const d = `M${pts[0][0]},${y1} ` + pts.map((p) => `L${p[0]},${p[1]}`).join(' ') + ` L${pts[pts.length - 1][0]},${y1} Z`;
+        svgEl('path', { d, class: 'sz-area' }, g);
+      }
+      const path = svgEl('path', { d: 'M' + pts.map((p) => p.join(',')).join(' L'), class: 'sz-line' }, g);
+      const len = Math.ceil(path.getTotalLength ? path.getTotalLength() : 4000);
+      path.style.strokeDasharray = len;
+      path.style.strokeDashoffset = len;
+      const hl = si === 0 ? hlIndex(s.values) : -1;
+      pts.forEach((p, i) => {
+        if (n <= 12 || i === hl || i === pts.length - 1) {
+          svgEl('circle', { cx: p[0], cy: p[1], r: i === hl ? 10 : 7, class: `sz-dot ${i === hl ? 'sz-hl' : ''}` }, g);
+        }
+      });
+      const last = pts[pts.length - 1];
+      const hp = hl >= 0 ? pts[hl] : last;
+      if (!multi || (si === 0 && hl >= 0 && hl !== pts.length - 1)) {
+        svgText(g, hp[0], hp[1] - 30, `sz-value ${hl >= 0 ? 'sz-hl' : ''}`, fmt(s.values[hl >= 0 ? hl : pts.length - 1]), hl === pts.length - 1 || hl < 0 ? 'end' : 'middle');
+      }
+      if (multi) svgText(g, last[0] + 18, last[1], 'sz-name', s.name + (si === 0 ? '  ' + fmt(s.values[pts.length - 1]) : ''));
+    });
+    labels.forEach((l, i) => { if (i % every === 0 || i === n - 1) svgText(svg, px(i), y1 + 34, 'sz-cat', l, i === 0 && n > 1 ? 'start' : i === n - 1 && n > 1 ? 'end' : 'middle'); });
+    return svg;
+  }
+  function renderCharts() {
+    document.querySelectorAll('.sz-chart').forEach((fig) => {
+      try {
+        if (renderChart(fig)) {
+          fig.dataset.rendered = '1';
+          if (!fig.closest('.reveal')) fig.classList.add('sz-static');
+        }
+      } catch (e) { console.warn('sz-chart: no se pudo dibujar', fig, e); }
+    });
+  }
+  /* Timeline: el punto de cada paso es un elemento real, no un ::before. */
+  function enhanceTimelines() {
+    document.querySelectorAll('ol.sz-timeline > li').forEach((li) => {
+      if (li.querySelector(':scope > .sz-dot')) return;
+      const dot = document.createElement('span');
+      dot.className = 'sz-dot';
+      dot.setAttribute('aria-hidden', 'true');
+      li.prepend(dot);
+    });
+  }
+
+  /* ── Modo presentador (tecla P) ───────────────────────────────────────
+     Abre una ventana con las notas de la slide actual, la siguiente, el
+     paso en curso y un cronometro. Las flechas funcionan desde cualquiera
+     de las dos ventanas. Notas: <aside class="notes"> dentro de la slide,
+     o el JSON de <script id="speaker-notes"> (por indice).              */
+  let presenter = null;
+  let presenterStart = 0;
+  function slideNotes(slide, i) {
+    const aside = slide && slide.querySelector('aside.notes');
+    if (aside) return aside.innerHTML.trim();
+    const arr = stage._notes || [];
+    const n = arr[i];
+    if (typeof n !== 'string' || !n.trim()) return '';
+    return n.split(/\n\s*\n/).map((p) => '<p>' + p.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</p>').join('');
+  }
+  function slideTitle(slide) {
+    if (!slide) return '';
+    const h = slide.querySelector('h1, h2, .ts-title');
+    const label = slide.getAttribute('data-label') || '';
+    return (h ? h.textContent.replace(/\s+/g, ' ').trim() : '') || label;
+  }
+  function updatePresenter() {
+    if (!presenter || presenter.closed) return;
+    const d = presenter.document;
+    const slides = Array.from(stage.querySelectorAll(':scope > section'));
+    const i = slides.findIndex((s) => s.hasAttribute('data-deck-active'));
+    const cur = slides[i], next = slides[i + 1];
+    const steps = cur ? parseInt(cur.dataset.steps || '1', 10) : 1;
+    const step = cur ? Math.max(1, parseInt(cur.dataset.currentStep || '1', 10)) : 1;
+    d.getElementById('pos').textContent = (i + 1) + ' / ' + slides.length + (steps > 1 ? '  ·  paso ' + step + ' / ' + steps : '');
+    d.getElementById('cur').textContent = slideTitle(cur);
+    d.getElementById('next').textContent = next ? slideTitle(next) : 'Fin del deck';
+    d.getElementById('notes').innerHTML = slideNotes(cur, i) || '<p class="empty">Esta slide no tiene notas.</p>';
+  }
+  function tickPresenter() {
+    if (!presenter || presenter.closed) return;
+    const s = Math.floor((Date.now() - presenterStart) / 1000);
+    const pad = (v) => String(v).padStart(2, '0');
+    presenter.document.getElementById('timer').textContent = pad(Math.floor(s / 60)) + ':' + pad(s % 60);
+    presenter.document.getElementById('clock').textContent = new Date().toLocaleTimeString(LANG, { hour: '2-digit', minute: '2-digit' });
+    setTimeout(tickPresenter, 500);
+  }
+  function openPresenter() {
+    if (presenter && !presenter.closed) { presenter.focus(); return; }
+    presenter = window.open('', 'slizdeck-presenter', 'width=1180,height=760');
+    if (!presenter) return;
+    presenterStart = Date.now();
+    const d = presenter.document;
+    /* Armado con el DOM, sin document.write de un HTML completo: una
+       etiqueta de cierre de body/head literal dentro de este script cortaria
+       la inyeccion de los scripts de la skill (que insertan su codigo antes
+       del cierre de body del deck). */
+    d.title = 'Presentador · ' + document.title;
+    d.documentElement.lang = LANG;
+    // Tras recargar el deck, window.open devuelve la ventana ya abierta: se
+    // reemplaza su estilo y su atajo de teclado en vez de acumularlos.
+    d.querySelectorAll('style[data-sz-presenter]').forEach((el) => el.remove());
+    const css = d.createElement('style');
+    css.setAttribute('data-sz-presenter', '');
+    css.textContent =
+      'body{margin:0;background:#0A0B0C;color:#E8EAEC;font:20px/1.5 system-ui,-apple-system,sans-serif;display:grid;grid-template-rows:auto 1fr;height:100vh}' +
+      'header{display:flex;gap:40px;align-items:baseline;padding:22px 32px;border-bottom:1px solid #22262A}' +
+      '#timer{font:600 44px ui-monospace,Menlo,monospace;color:#fff}#clock,#pos{color:#8A9199;font-family:ui-monospace,Menlo,monospace}' +
+      'main{display:grid;grid-template-columns:2fr 1fr;min-height:0}' +
+      '#notes{padding:28px 36px;overflow:auto;font-size:28px;line-height:1.5;color:#F2F3F4}#notes p{margin:0 0 .8em}#notes .empty{color:#6B7278}' +
+      'aside{padding:28px 32px;border-left:1px solid #22262A;display:flex;flex-direction:column;gap:28px}' +
+      '.k{font:600 13px ui-monospace,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;color:#6B7278;margin-bottom:6px}' +
+      '#cur{font-size:26px;font-weight:600;color:#fff}#next{font-size:22px;color:#AEB4BA}.hint{margin-top:auto;color:#6B7278;font-size:15px}';
+    d.head.appendChild(css);
+    d.body.innerHTML =
+      '<header><span id="timer">00:00</span><span id="pos"></span><span id="clock"></span></header>' +
+      '<main><div id="notes"></div><aside><div><div class="k">Ahora</div><div id="cur"></div></div>' +
+      '<div><div class="k">Siguiente</div><div id="next"></div></div>' +
+      '<div class="hint">← → avanzan desde esta ventana · R reinicia el cronómetro · P la vuelve a enfocar</div></aside></main>';
+    d.onkeydown = (e) => {
+      if (e.key === 'r' || e.key === 'R') { presenterStart = Date.now(); return; }
+      if (['ArrowRight', 'ArrowLeft', ' ', 'PageDown', 'PageUp', 'Home', 'End'].includes(e.key)) {
+        e.preventDefault();
+        // Desde el body, como una tecla real: asi el controlador de pasos
+        // (capture en window) corre antes que el cambio de slide de
+        // deck-stage. Despachado directo en window, los dos corrian como
+        // "at target" en orden de registro y la flecha saltaba de slide sin
+        // revelar el paso siguiente.
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: e.key, bubbles: true, cancelable: true }));
+      }
+    };
+    updatePresenter();
+    tickPresenter();
+  }
+  window.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const t = e.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if (e.key === 'p' || e.key === 'P') { e.preventDefault(); openPresenter(); }
+  });
+
+  /* Apply current step: every .reveal whose data-step <= current gets .is-on. */
+  function applyStep(slide, step) {
+    slide.dataset.currentStep = String(step);
+    slide.querySelectorAll('.reveal').forEach((el) => {
+      const elStep = parseInt(el.dataset.step || '1', 10);
+      el.classList.toggle('is-on', elStep <= step);
+    });
+    slide.querySelectorAll('[data-counter]').forEach((el) => {
+      const target = parseInt(el.dataset.targetStep || '1', 10);
+      if (target <= step) runCounter(el);
+    });
+    const marker = slide.querySelector('.act-marker .step-num');
+    if (marker) marker.textContent = String(step);
+    updatePresenter();
+  }
+
+  /* Reset slide to step 0 (all reveals hidden), then advance to step 1
+     so the first reveal animates in on entry. */
+  function afterFrame(fn) {
+    let done = false;
+    const once = () => { if (!done) { done = true; fn(); } };
+    requestAnimationFrame(() => setTimeout(once, 0));
+    setTimeout(once, 120);
+  }
+
+  function resetAndEnter(slide) {
+    if (!slide) return;
+    slide.querySelectorAll('.reveal').forEach((el) => el.classList.remove('is-on'));
+    resetCounters(slide);
+    slide.dataset.currentStep = '0';
+    // Un frame para que el navegador pinte el paso 0 y la entrada anime; con
+    // temporizador de respaldo, porque sin compositor (Chrome headless sin
+    // GPU) el rAF puede no llegar nunca y la slide quedaria en blanco.
+    afterFrame(() => applyStep(slide, 1));
+  }
+
+  /* Capture-phase keydown — runs BEFORE deck-stage's own handler. Advances
+     in-slide steps until exhausted, then lets deck-stage advance the slide. */
+  window.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const t = e.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    const slide = stage.querySelector(':scope > section[data-deck-active]');
+    if (!slide) return;
+    const total = parseInt(slide.dataset.steps || '1', 10);
+    const current = parseInt(slide.dataset.currentStep || '1', 10);
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
+      if (current < total) {
+        applyStep(slide, current + 1);
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+      if (current > 1) {
+        applyStep(slide, current - 1);
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    }
+  }, { capture: true });
+
+  /* On slide change: sync data-active, re-enter the new slide, update progress bar */
+  stage.addEventListener('slidechange', (e) => {
+    syncActive();
+    resetAndEnter(e.detail.slide);   // ya espera su propio frame
+    updatePresenter();
+    const pct = (e.detail.index + 1) / e.detail.total;
+    const bar = document.getElementById('progress-bar');
+    if (bar) bar.style.transform = 'scaleX(' + pct + ')';
+  });
+
+  /* Entrada inicial: deck-stage puede emitir su primer `slidechange` antes de
+     que este script registre el listener de arriba (define el custom element en
+     el bloque anterior). Sin esto, abrir el deck directo en una slide animada
+     — o deep-linkear con #N — la deja en blanco: los .reveal nunca reciben
+     .is-on. Sembramos el estado a mano una vez, ya con el DOM listo. */
+  function enterInitialSlide() {
+    const slide = stage.querySelector(':scope > section[data-deck-active]');
+    if (!slide) { setTimeout(enterInitialSlide, 16); return; }
+    syncActive();
+    resetAndEnter(slide);
+    const total = stage.querySelectorAll(':scope > section').length || 1;
+    const idx = Array.prototype.indexOf.call(stage.querySelectorAll(':scope > section'), slide);
+    const bar = document.getElementById('progress-bar');
+    if (bar) bar.style.transform = 'scaleX(' + ((idx + 1) / total) + ')';
+  }
+  renderCharts();
+  enhanceTimelines();
+  enterInitialSlide();
+
+  /* Antes de imprimir / exportar a PDF: llevar TODAS las slides a su estado
+     final, no solo la activa. El CSS de @media print ya revela los .reveal,
+     pero los contadores [data-counter] necesitan JS: su valor lo calcula
+     runCounter al llegar al paso objetivo, asi que sin esto un dato se
+     imprime como "0" en vez de su cifra real. */
+  let beforePrint = null;
+  function finalizeForPrint() {
+    if (!beforePrint) {
+      const live = stage.querySelector(':scope > section[data-deck-active]');
+      beforePrint = { slide: live, step: live ? parseInt(live.dataset.currentStep || '1', 10) : 1 };
+    }
+    stage.querySelectorAll(':scope > section').forEach((slide) => {
+      // Los patrones que miran section[data-current-step="N"] (pulsos,
+      // magic-move) tambien llegan a su estado final.
+      slide.dataset.currentStep = slide.dataset.steps || '1';
+      slide.querySelectorAll('.reveal').forEach((el) => el.classList.add('is-on'));
+      slide.querySelectorAll('[data-counter]').forEach((el) => {
+        const { target, unitHTML, formatVal } = counterParts(el);
+        el.dataset.played = '1';
+        el._counterRun = (el._counterRun || 0) + 1;   // corta cualquier animacion en curso
+        el.innerHTML = formatVal(target) + unitHTML;
+      });
+      const marker = slide.querySelector('.act-marker .step-num');
+      if (marker) marker.textContent = slide.dataset.steps || '1';
+    });
+  }
+  /* Despues de imprimir, la slide en vivo vuelve al paso en que estaba (sin
+     esto, tras un Cmd+P quedaba todo revelado). */
+  function restoreAfterPrint() {
+    if (!beforePrint) return;
+    const { slide, step } = beforePrint;
+    beforePrint = null;
+    stage.querySelectorAll(':scope > section').forEach((s) => {
+      if (s === slide) return;
+      s.querySelectorAll('.reveal').forEach((el) => el.classList.remove('is-on'));
+      resetCounters(s);
+    });
+    if (slide) applyStep(slide, step);
+  }
+  window.addEventListener('beforeprint', finalizeForPrint);
+  window.addEventListener('afterprint', restoreAfterPrint);
+  if (window.matchMedia) {
+    const mq = window.matchMedia('print');
+    if (mq.addEventListener) mq.addEventListener('change', (e) => { if (e.matches) finalizeForPrint(); else restoreAfterPrint(); });
+  }
+
+  /* Fullscreen button — toggle, hide while fullscreen */
+  const fsBtn = document.getElementById('fs-btn');
+  if (fsBtn) {
+    fsBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+      else document.exitFullscreen();
+    });
+    document.addEventListener('fullscreenchange', () => {
+      if (document.fullscreenElement) fsBtn.setAttribute('data-fs', '1');
+      else fsBtn.removeAttribute('data-fs');
+    });
+  }
+</script>
+
+</body>
+</html>
